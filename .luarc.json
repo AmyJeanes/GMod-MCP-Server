@@ -1,0 +1,19 @@
+{
+    "runtime": {
+        "version": "LuaJIT"
+    },
+    "workspace": {
+        "library": [
+            "./.tools/glua-api"
+        ]
+    },
+    "diagnostics": {
+        "disable": [
+            "param-type-mismatch",
+            "undefined-field",
+            "unused",
+            "redefined-local",
+            "need-check-nil"
+        ]
+    }
+}

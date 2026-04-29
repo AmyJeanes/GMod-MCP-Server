@@ -1,0 +1,18 @@
+{
+    "title": "GMod MCP Server",
+    "type": "tool",
+    "tags": [ "fun" ],
+    "ignore":
+    [
+        "*.md",
+        "*.git*",
+        "CODEOWNERS",
+        "LICENSE",
+        ".github/*",
+        ".claude/*",
+        ".luarc.json",
+        ".tools/*",
+        "server/*",
+        "docs/*"
+    ]
+}

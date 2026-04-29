@@ -1,0 +1,36 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "server", "server", "{DAD03CFC-D5FA-AC94-41C7-9ABAB326F09E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GModMcpServer", "server\GModMcpServer\GModMcpServer.csproj", "{3D2F830E-E31A-5E21-1EE4-112D15A393A6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GModMcpServer.Tests", "server\GModMcpServer.Tests\GModMcpServer.Tests.csproj", "{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6} = {DAD03CFC-D5FA-AC94-41C7-9ABAB326F09E}
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7} = {DAD03CFC-D5FA-AC94-41C7-9ABAB326F09E}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {7603E739-B9C8-4871-8541-63C81AB2FD8F}
+	EndGlobalSection
+EndGlobal

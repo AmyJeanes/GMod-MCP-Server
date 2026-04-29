@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  glua-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install glua_check
+        run: cargo install glua_check --locked
+
+      - name: Fetch GLua API stubs
+        run: |
+          mkdir -p .tools/glua-api
+          url=$(gh api repos/luttje/glua-api-snippets/releases/latest \
+              --jq '.assets[] | select(.name | endswith(".lua.zip")) | .browser_download_url')
+          curl -sL -o .tools/glua-api.zip "$url"
+          unzip -q -o .tools/glua-api.zip -d .tools/glua-api/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run glua_check
+        run: glua_check .
+
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore GMod-MCP-Server.sln
+
+      - name: Build
+        run: dotnet build GMod-MCP-Server.sln --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test server/GModMcpServer.Tests/GModMcpServer.Tests.csproj --no-build --configuration Release --logger "console;verbosity=normal"
