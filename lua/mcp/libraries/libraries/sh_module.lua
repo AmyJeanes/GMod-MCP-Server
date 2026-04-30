@@ -5,7 +5,7 @@ MCP._capabilities = MCP._capabilities or {}
 
 -- Capabilities replicate server -> client so toggling on the server propagates to clients.
 -- FCVAR_ARCHIVE so the user's capability grants persist across game restarts.
-local CAP_FLAGS = bit.bor(FCVAR_PROTECTED, FCVAR_DONTRECORD, FCVAR_REPLICATED, FCVAR_ARCHIVE)
+local CAP_FLAGS = { FCVAR_PROTECTED, FCVAR_DONTRECORD, FCVAR_REPLICATED, FCVAR_ARCHIVE }
 
 local function validateId(kind, id)
     if type(id) ~= "string" or id == "" then
@@ -92,10 +92,7 @@ function MCP:AddFunction(t)
     scheduleManifestWrite()
 end
 
-function MCP:CheckCapabilities(funcId)
-    local fn = self._functions[funcId]
-    if not fn then return false, "unknown function: " .. tostring(funcId) end
-
+function MCP:CheckCapabilities(fn)
     for _, capId in ipairs(fn.requires) do
         local cap = self._capabilities[capId]
         if not cap then
@@ -192,26 +189,30 @@ function MCP:Dispatch(funcId, args)
             error = "MCP bridge is disabled. In the GMod console, run `mcp_enable 1` to allow tool dispatch.",
         }
     else
-        local capOk, capErr = self:CheckCapabilities(funcId)
-        if not capOk then
-            response = { ok = false, error = capErr }
+        local fn = self._functions[funcId]
+        if not fn then
+            response = { ok = false, error = "unknown function: " .. tostring(funcId) }
         else
-            local fn = self._functions[funcId]
-            local pcallOk, ret, output, warnings = captureRun(fn.handler, args or {}, {})
-
-            if not pcallOk then
-                response = { ok = false, error = "handler error: " .. tostring(ret) }
-            elseif type(ret) ~= "table" then
-                response = { ok = false, error = "handler must return a table; got " .. type(ret) }
+            local capOk, capErr = self:CheckCapabilities(fn)
+            if not capOk then
+                response = { ok = false, error = capErr }
             else
-                response = ret
-            end
+                local pcallOk, ret, output, warnings = captureRun(fn.handler, args or {}, {})
 
-            if #output > 0 then
-                response.console = table.concat(output, "")
-            end
-            if #warnings > 0 then
-                response.warnings = warnings
+                if not pcallOk then
+                    response = { ok = false, error = "handler error: " .. tostring(ret) }
+                elseif type(ret) ~= "table" then
+                    response = { ok = false, error = "handler must return a table; got " .. type(ret) }
+                else
+                    response = ret
+                end
+
+                if #output > 0 then
+                    response.console = table.concat(output, "")
+                end
+                if #warnings > 0 then
+                    response.warnings = warnings
+                end
             end
         end
     end

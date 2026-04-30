@@ -3,10 +3,10 @@
 
 -- mcp_enable replicates server -> client so a single toggle controls both bridges.
 -- FCVAR_ARCHIVE so user consent persists across game restarts.
-local enableFlags = bit.bor(FCVAR_PROTECTED, FCVAR_DONTRECORD, FCVAR_REPLICATED, FCVAR_ARCHIVE)
+local enableFlags = { FCVAR_PROTECTED, FCVAR_DONTRECORD, FCVAR_REPLICATED, FCVAR_ARCHIVE }
 
 -- mcp_poll_interval is per-realm (each side polls at its own rate).
-local localFlags = bit.bor(FCVAR_PROTECTED, FCVAR_DONTRECORD, FCVAR_ARCHIVE)
+local localFlags = { FCVAR_PROTECTED, FCVAR_DONTRECORD, FCVAR_ARCHIVE }
 
 if not ConVarExists("mcp_enable") then
     CreateConVar("mcp_enable", "0", enableFlags,
