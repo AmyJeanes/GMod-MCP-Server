@@ -57,7 +57,19 @@ If you're operating in a fresh clone, check both of these and install whichever 
    ```bash
    glua_ls --version
    ```
-   If missing → `cargo install glua_ls`.
+   If missing or outdated, install it from the latest
+   [`Pollux12/gmod-glua-ls`](https://github.com/Pollux12/gmod-glua-ls) GitHub release,
+   not Cargo. The crates.io packages can lag the release binaries used by CI.
+
+   Windows PowerShell example:
+   ```powershell
+   New-Item -ItemType Directory -Force .tools/glua-ls
+   $url = gh api repos/Pollux12/gmod-glua-ls/releases/latest `
+       --jq '.assets[] | select(.name == "glua_ls-win32-x64.zip") | .browser_download_url'
+   Invoke-WebRequest -Uri $url -OutFile .tools/glua_ls.zip
+   Expand-Archive -Path .tools/glua_ls.zip -DestinationPath .tools/glua-ls -Force
+   ```
+   Add `.tools/glua-ls` to the PATH used by Claude Code, or place `glua_ls.exe` in another PATH directory, then re-run `glua_ls --version`.
 
 2. **GLua API stubs at `.tools/glua-api/`**
    ```bash
@@ -76,13 +88,21 @@ After installing either piece, run `/reload-plugins` so Claude Code re-spawns th
 
 #### Workspace-wide scans with `glua_check`
 
-`glua_ls` only analyzes files as they are opened/edited. To audit the whole repo at once:
+`glua_ls` only analyzes files as they are opened/edited. To audit the whole repo at once, use the CLI sibling `glua_check` — same engine, same `.luarc.json`, but scans every file. Install it from the latest `Pollux12/gmod-glua-ls` GitHub release into `.tools/glua-check/`, matching the source CI uses:
 
-```bash
-glua_check .
+```powershell
+New-Item -ItemType Directory -Force .tools/glua-check
+$url = gh api repos/Pollux12/gmod-glua-ls/releases/latest `
+    --jq '.assets[] | select(.name == "glua_check-win32-x64.zip") | .browser_download_url'
+Invoke-WebRequest -Uri $url -OutFile .tools/glua_check.zip
+Expand-Archive -Path .tools/glua_check.zip -DestinationPath .tools/glua-check -Force
 ```
 
-Run from the project root (the `.` is required on Windows). `cargo install glua_check` if missing.
+```bash
+.tools/glua-check/glua_check.exe .
+```
+
+Run from the project root. The `.` is required on Windows, and the working directory must be the project root so `.luarc.json`'s relative paths resolve.
 
 ## .NET side
 

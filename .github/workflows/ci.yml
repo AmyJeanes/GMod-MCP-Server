@@ -35,7 +35,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run glua_check
-        run: glua_check .
+        run: glua_check --warnings-as-errors .
 
   dotnet:
     runs-on: ubuntu-latest
