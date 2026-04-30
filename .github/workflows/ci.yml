@@ -12,13 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
       - name: Install glua_check
-        run: cargo install glua_check --locked
+        run: |
+          url=$(gh api repos/Pollux12/gmod-glua-ls/releases/latest \
+              --jq '.assets[] | select(.name == "glua_check-linux-x64.tar.gz") | .browser_download_url')
+          curl -sL -o glua_check.tar.gz "$url"
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf glua_check.tar.gz -C "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/glua_check"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Fetch GLua API stubs
         run: |
