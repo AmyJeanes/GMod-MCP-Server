@@ -43,7 +43,7 @@ Built-in capabilities live in `lua/mcp/libraries/sh_capabilities.lua`. Project-s
 ## Tooling
 
 - `.luarc.json` configures sumneko-LuaLS with `./.tools/glua-api` (GLua type stubs).
-- `.tools/` is gitignored. Populate it once with the GLua API stubs before the LSP can produce useful diagnostics — see "First-time setup" below.
+- `.tools/` is gitignored. Run `pwsh scripts/install-tools.ps1` once to populate it with the pinned `glua_ls` / `glua_check` binaries and the GLua API stubs — see "First-time setup" below.
 
 ### Claude Code LSP integration (`glua-lsp` plugin)
 
@@ -51,58 +51,30 @@ Diagnostics, hover, and jump-to-definition are provided via the `glua-lsp` plugi
 
 #### First-time setup (do this before touching `.lua` files)
 
-If you're operating in a fresh clone, check both of these and install whichever is missing — otherwise diagnostics will be either absent or full of noise:
+`scripts/install-tools.ps1` is the single source of truth for `glua_check`, `glua_ls`, and the GLua API stubs. Versions are pinned at the top of the script and shared with CI, so local and CI run the exact same engine.
 
-1. **`glua_ls` binary on PATH**
-   ```bash
-   glua_ls --version
-   ```
-   If missing or outdated, install it from the latest
-   [`Pollux12/gmod-glua-ls`](https://github.com/Pollux12/gmod-glua-ls) GitHub release,
-   not Cargo. The crates.io packages can lag the release binaries used by CI.
+In a fresh clone, run it once before touching `.lua` files:
 
-   Windows PowerShell example:
-   ```powershell
-   New-Item -ItemType Directory -Force .tools/glua-ls
-   $url = gh api repos/Pollux12/gmod-glua-ls/releases/latest `
-       --jq '.assets[] | select(.name == "glua_ls-win32-x64.zip") | .browser_download_url'
-   Invoke-WebRequest -Uri $url -OutFile .tools/glua_ls.zip
-   Expand-Archive -Path .tools/glua_ls.zip -DestinationPath .tools/glua-ls -Force
-   ```
-   Add `.tools/glua-ls` to the PATH used by Claude Code, or place `glua_ls.exe` in another PATH directory, then re-run `glua_ls --version`.
+```bash
+pwsh -File scripts/install-tools.ps1
+```
 
-2. **GLua API stubs at `.tools/glua-api/`**
-   ```bash
-   ls .tools/glua-api/_globals.lua
-   ```
-   If missing:
-   ```bash
-   mkdir -p .tools/glua-api
-   url=$(gh api repos/luttje/glua-api-snippets/releases/latest \
-       --jq '.assets[] | select(.name | endswith(".lua.zip")) | .browser_download_url')
-   curl -sL -o .tools/glua-api.zip "$url"
-   unzip -q -o .tools/glua-api.zip -d .tools/glua-api/
-   ```
+It is idempotent — re-running is a no-op when the pinned versions are already present, so it's also the recovery path when LSP diagnostics look wrong. The `glua-lsp` Claude Code plugin auto-resolves `glua_ls` from this project's `.tools/bin/` at LSP launch (no PATH plumbing needed); after a fresh install just `/reload-plugins`.
 
-After installing either piece, run `/reload-plugins` so Claude Code re-spawns the LSP.
+To bump a version: edit the `$GluaLsVersion` / `$GluaApiVersion` constants in `scripts/install-tools.ps1`, commit, and CI + every fresh clone picks it up. Renovate (`.github/renovate.json` customManagers) also raises bump PRs automatically, gated by the GLua Check CI job.
+
+The `glua-lsp:install-glua-ls` skill covers the same recovery flow if symptoms appear later.
 
 #### Workspace-wide scans with `glua_check`
 
-`glua_ls` only analyzes files as they are opened/edited. To audit the whole repo at once, use the CLI sibling `glua_check` — same engine, same `.luarc.json`, but scans every file. Install it from the latest `Pollux12/gmod-glua-ls` GitHub release into `.tools/glua-check/`, matching the source CI uses:
-
-```powershell
-New-Item -ItemType Directory -Force .tools/glua-check
-$url = gh api repos/Pollux12/gmod-glua-ls/releases/latest `
-    --jq '.assets[] | select(.name == "glua_check-win32-x64.zip") | .browser_download_url'
-Invoke-WebRequest -Uri $url -OutFile .tools/glua_check.zip
-Expand-Archive -Path .tools/glua_check.zip -DestinationPath .tools/glua-check -Force
-```
+`glua_ls` only analyzes files as they are opened/edited. To audit the whole repo at once, use `scripts/glua-check.ps1` — it installs the pinned tooling on demand (no-op when present) and runs `glua_check --warnings-as-errors` against the repo. CI calls the same script.
 
 ```bash
-.tools/glua-check/glua_check.exe .
+pwsh -File scripts/glua-check.ps1                # whole repo
+pwsh -File scripts/glua-check.ps1 lua/autorun     # scoped path
 ```
 
-Run from the project root. The `.` is required on Windows, and the working directory must be the project root so `.luarc.json`'s relative paths resolve.
+Useful when a fix has rippled across the codebase or when picking up the project to find latent issues the LSP hasn't surfaced yet.
 
 ## .NET side
 
