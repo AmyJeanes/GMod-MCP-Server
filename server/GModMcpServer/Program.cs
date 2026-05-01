@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GModMcpServer.Bridge;
@@ -208,10 +209,7 @@ internal static class Program
 
             return new CallToolResult
             {
-                Content = new List<ContentBlock>
-                {
-                    new TextContentBlock { Text = resultJson },
-                },
+                Content = BuildContent(resp.Result, resultJson),
                 IsError = !ok,
             };
         }
@@ -230,6 +228,54 @@ internal static class Program
         IsError = true,
         Content = new List<ContentBlock> { new TextContentBlock { Text = message } },
     };
+
+    /// <summary>
+    /// Convert a Lua-side response into MCP content blocks. If the handler
+    /// supplied an explicit <c>content</c> array (e.g. an image tool), each
+    /// entry is mapped to its native block type. Otherwise the whole result
+    /// JSON is dumped as a single text block, preserving the legacy behaviour.
+    /// </summary>
+    private static List<ContentBlock> BuildContent(JsonNode? result, string fallbackJson)
+    {
+        if (result is JsonObject obj
+            && obj.TryGetPropertyValue("content", out var contentNode)
+            && contentNode is JsonArray arr
+            && arr.Count > 0)
+        {
+            var blocks = new List<ContentBlock>();
+            foreach (var node in arr)
+            {
+                if (node is not JsonObject item) continue;
+                var type = item["type"]?.GetValue<string>();
+                switch (type)
+                {
+                    case "text":
+                        blocks.Add(new TextContentBlock
+                        {
+                            Text = item["text"]?.GetValue<string>() ?? "",
+                        });
+                        break;
+                    case "image":
+                        blocks.Add(new ImageContentBlock
+                        {
+                            Data = Encoding.UTF8.GetBytes(item["data"]?.GetValue<string>() ?? ""),
+                            MimeType = (item["mimeType"] ?? item["mime"])?.GetValue<string>() ?? "image/png",
+                        });
+                        break;
+                    case "audio":
+                        blocks.Add(new AudioContentBlock
+                        {
+                            Data = Encoding.UTF8.GetBytes(item["data"]?.GetValue<string>() ?? ""),
+                            MimeType = (item["mimeType"] ?? item["mime"])?.GetValue<string>() ?? "audio/wav",
+                        });
+                        break;
+                }
+            }
+            if (blocks.Count > 0) return blocks;
+        }
+
+        return new List<ContentBlock> { new TextContentBlock { Text = fallbackJson } };
+    }
 }
 
 public sealed record BridgePaths(string McpRoot, string SessionId);

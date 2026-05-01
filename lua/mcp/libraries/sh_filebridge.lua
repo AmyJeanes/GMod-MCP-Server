@@ -50,7 +50,14 @@ local function processOne(filename)
         return
     end
 
-    writeResponse(req.id, MCP:Dispatch(req.function_id, req.args))
+    local response = MCP:Dispatch(req.function_id, req.args, function(deferredResponse)
+        writeResponse(req.id, deferredResponse)
+    end)
+    -- Sync handlers return the response directly; deferred handlers return nil
+    -- and resolve later via the respondLater callback above.
+    if response then
+        writeResponse(req.id, response)
+    end
 end
 
 local function pollTick()

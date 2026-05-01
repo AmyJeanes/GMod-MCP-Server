@@ -3,6 +3,11 @@
 MCP._functions = MCP._functions or {}
 MCP._capabilities = MCP._capabilities or {}
 
+-- Sentinel returned by an async handler to tell the bridge "don't write a
+-- response yet — I'll deliver one via ctx.respond". Exposed as `ctx.deferred`
+-- so handler code never has to reach into MCP internals.
+MCP._DEFERRED = MCP._DEFERRED or {}
+
 -- Capabilities replicate server -> client so toggling on the server propagates to clients.
 -- FCVAR_ARCHIVE so the user's capability grants persist across game restarts.
 local CAP_FLAGS = { FCVAR_PROTECTED, FCVAR_DONTRECORD, FCVAR_REPLICATED, FCVAR_ARCHIVE }
@@ -192,7 +197,11 @@ local function logDispatch(funcId, args, response, elapsedMs)
     end
 end
 
-function MCP:Dispatch(funcId, args)
+-- Dispatch returns either a final response table (sync handler) or nil
+-- (deferred). When nil, the handler is expected to call `ctx.respond(result)`
+-- exactly once; the bridge passes a `respondLater` callback that writes that
+-- response when it eventually arrives.
+function MCP:Dispatch(funcId, args, respondLater)
     local startSec = SysTime()
     local response
 
@@ -212,10 +221,32 @@ function MCP:Dispatch(funcId, args)
             if not capOk then
                 response = { ok = false, error = capErr }
             else
-                local pcallOk, ret, output, warnings = captureRun(fn.handler, args or {}, {})
+                local resolved = false
+                local ctx = {
+                    deferred = MCP._DEFERRED,
+                    respond = function(deferredResponse)
+                        if resolved then return end
+                        resolved = true
+                        if type(deferredResponse) ~= "table" then
+                            deferredResponse = {
+                                ok = false,
+                                error = "deferred handler must respond with a table; got " .. type(deferredResponse),
+                            }
+                        end
+                        logDispatch(funcId, args, deferredResponse, (SysTime() - startSec) * 1000)
+                        if respondLater then respondLater(deferredResponse) end
+                    end,
+                }
+
+                local pcallOk, ret, output, warnings = captureRun(fn.handler, args or {}, ctx)
 
                 if not pcallOk then
                     response = { ok = false, error = "handler error: " .. tostring(ret) }
+                elseif ret == MCP._DEFERRED then
+                    -- Async path: handler will call ctx.respond later. Console
+                    -- output / warnings captured during the synchronous portion
+                    -- are dropped because the response isn't ours to write.
+                    return nil
                 elseif type(ret) ~= "table" then
                     response = { ok = false, error = "handler must return a table; got " .. type(ret) }
                 else
