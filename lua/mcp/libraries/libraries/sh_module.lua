@@ -61,6 +61,21 @@ function MCP:AddCapability(t)
     scheduleManifestWrite()
 end
 
+-- Shallow-copies the user's schema and drops empty `properties`. util.TableToJSON
+-- encodes empty Lua tables as JSON arrays (`[]`), but JSON Schema requires
+-- `properties` to be an object — strict MCP clients reject `"properties": []`.
+-- An absent `properties` key is equivalent to `{}` in JSON Schema, so dropping
+-- it is the correct canonical form.
+local function normalizeSchema(s)
+    if type(s) ~= "table" then return { type = "object" } end
+    local out = {}
+    for k, v in pairs(s) do out[k] = v end
+    if type(out.properties) == "table" and next(out.properties) == nil then
+        out.properties = nil
+    end
+    return out
+end
+
 function MCP:AddFunction(t)
     if type(t) ~= "table" then error("MCP:AddFunction expects a table", 2) end
     validateId("function", t.id)
@@ -82,7 +97,7 @@ function MCP:AddFunction(t)
     self._functions[t.id] = {
         id = t.id,
         description = t.description or "",
-        schema = t.schema or { type = "object", properties = {}, required = {} },
+        schema = normalizeSchema(t.schema),
         requires = requires,
         handler = t.handler,
         realm = MCP.util.RealmName(),
