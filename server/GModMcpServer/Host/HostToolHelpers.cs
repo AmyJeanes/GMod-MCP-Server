@@ -46,6 +46,23 @@ internal static class HostToolHelpers
         return v.TryGetInt32(out var i) ? i : fallback;
     }
 
+    public static bool? GetBoolOrNull(IDictionary<string, JsonElement>? args, string key)
+    {
+        if (args is null || !args.TryGetValue(key, out var v)) return null;
+        return v.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => null,
+        };
+    }
+
+    public static int? GetIntOrNull(IDictionary<string, JsonElement>? args, string key)
+    {
+        if (args is null || !args.TryGetValue(key, out var v) || v.ValueKind != JsonValueKind.Number) return null;
+        return v.TryGetInt32(out var i) ? i : null;
+    }
+
     public static List<string> GetStringArray(IDictionary<string, JsonElement>? args, string key)
     {
         var list = new List<string>();
