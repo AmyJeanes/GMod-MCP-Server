@@ -12,6 +12,7 @@
         ".claude/*",
         ".luarc.json",
         ".tools/*",
+        "scripts/*",
         "server/*",
         "docs/*"
     ]
