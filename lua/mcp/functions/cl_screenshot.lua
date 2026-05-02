@@ -38,6 +38,53 @@ local function parseVec3(t)
     return x, y, z
 end
 
+-- Inside a render.RenderView with w/h smaller than the real screen, ScrW()
+-- and ScrH() return the *viewport* dimensions, not the screen. Addons that
+-- key per-frame render targets off ScrW()/ScrH() (e.g. world-portals'
+-- linked_portal_door, which names its RT "portal:<idx>:<scrw>:<scrh>") will
+-- therefore look up a *different* RT inside our screenshot than the one the
+-- normal frame rendered into — yielding a black portal on the first shot,
+-- and a populated one on the second once our own ENT:Draw has primed the
+-- viewport-sized RT. Pre-binding each portal's `.texture` to the
+-- screenshot-sized RT (and passing width/height in the view so
+-- world-portals' wrapper fills it at matching dimensions) keeps both halves
+-- in agreement on the very first call. Restored after the render so the
+-- next regular frame is undisturbed.
+local function primeWorldPortalRTs(outW, outH)
+    if not (_G.wp and istable(_G.wp)) then return nil end
+    local portals = ents.FindByClass("linked_portal_door")
+    if not portals or #portals == 0 then return nil end
+    local resCvar = GetConVar("worldportals_resolution_percentage")
+    local res = resCvar and (resCvar:GetInt() / 100) or 1
+    local rtW = math.max(1, math.floor(outW * res))
+    local rtH = math.max(1, math.floor(outH * res))
+    local saved = {}
+    for _, portal in ipairs(portals) do
+        if IsValid(portal) then
+            local name = "portal:" .. portal:EntIndex() .. ":" .. rtW .. ":" .. rtH
+            local rt = GetRenderTarget(name, rtW, rtH)
+            if rt then
+                saved[#saved + 1] = { portal = portal, prev = portal:GetTexture() }
+                portal:SetTexture(rt)
+            end
+        end
+    end
+    return saved
+end
+
+local function restoreWorldPortalRTs(saved)
+    if not saved then return end
+    for i = 1, #saved do
+        local e = saved[i]
+        -- prev may be nil (portal had never been drawn yet); SetTexture(nil)
+        -- restores the original "skip" state so wp.renderportals' `texture`
+        -- check leaves it alone on the next regular frame.
+        if IsValid(e.portal) then
+            e.portal:SetTexture(e.prev)
+        end
+    end
+end
+
 MCP:AddFunction({
     id = "screenshot",
     description = "Capture a JPEG screenshot. Without `origin`/`angles` returns a render of the local player's current viewport. Supplying `origin`+`angles` (and optional `fov`) re-renders the world from that arbitrary camera without moving the player. Output is downscaled to a sensible resolution (default 1280x720) regardless of the user's actual screen size.",
@@ -141,6 +188,7 @@ MCP:AddFunction({
                 playerEye = { pos = viewOrigin, ang = viewAngles, fov = viewFov }
             end
 
+            local primedPortals = primeWorldPortalRTs(outW, outH)
             local rvOk, rvErr = pcall(render.RenderView, {
                 origin = viewOrigin,
                 angles = viewAngles,
@@ -151,6 +199,11 @@ MCP:AddFunction({
                 -- different ratio than the user's monitor.
                 aspectratio = outW / outH,
                 x = 0, y = 0, w = outW, h = outH,
+                -- world-portals' RenderView wrapper reads `width`/`height`
+                -- (not `w`/`h`) from the view to size its inner portal
+                -- render. Without these it falls back to ScrW/ScrH and
+                -- fills the portal RTs at the wrong viewport size.
+                width = outW, height = outH,
                 drawhud = false,
                 drawmonitors = false,
                 -- Player-view: show the held weapon (gravgun etc.).
@@ -163,6 +216,7 @@ MCP:AddFunction({
                 dopostprocess = true,
                 bloomtone = true,
             })
+            restoreWorldPortalRTs(primedPortals)
             if not rvOk then
                 finish({ ok = false, error = "render.RenderView failed: " .. tostring(rvErr) })
                 return
