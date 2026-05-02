@@ -25,10 +25,17 @@ util.AddNetworkString("MCP_WorkshopReady")
 
 local INTENT_PATH = "mcp/launch_intent.json"
 local FALLBACK_HOOK = "MCP_LaunchIntent_Fallback"
+local READY_HOOK = "MCP_LaunchIntent_Ready"
 
 local pendingIntent = nil
 local fired = false
 local startTime = 0
+
+-- Eager check: the .NET host writes the intent file *before* spawning gmod.exe,
+-- so the bridge can answer "bootstrap pending" correctly even on the very first
+-- _ping that arrives before InitPostEntity has fired. Dedicated servers don't
+-- run the bootstrap flow, so they always report done.
+MCP._bootstrap_pending = (not game.IsDedicated()) and file.Exists(INTENT_PATH, "DATA")
 
 local function readIntent()
     if not file.Exists(INTENT_PATH, "DATA") then return nil end
@@ -47,11 +54,17 @@ local function transition(reason)
 
     local intent = pendingIntent
     pendingIntent = nil
-    if not intent then return end
+    if not intent then
+        MCP._bootstrap_pending = false
+        return
+    end
 
     local targetMap = tostring(intent.target_map or "")
     local targetGm = tostring(intent.target_gamemode or "sandbox")
-    if targetMap == "" then return end
+    if targetMap == "" then
+        MCP._bootstrap_pending = false
+        return
+    end
 
     MsgN(string.format("[MCP] launch intent: %s after %.2fs.",
         reason, RealTime() - startTime))
@@ -66,6 +79,14 @@ local function transition(reason)
         game.GetMap(), targetMap, targetGm))
     RunConsoleCommand("gamemode", targetGm)
     RunConsoleCommand("map", targetMap)
+
+    -- Clear bootstrap_pending only after the *target* map has fully loaded.
+    -- The map command above kicks off a fresh InitPostEntity once loading
+    -- finishes; that's the signal the .NET host waits on.
+    hook.Add("InitPostEntity", READY_HOOK, function()
+        hook.Remove("InitPostEntity", READY_HOOK)
+        MCP._bootstrap_pending = false
+    end)
 end
 
 net.Receive("MCP_WorkshopReady", function(_, ply)
@@ -80,7 +101,12 @@ hook.Add("InitPostEntity", "MCP_LaunchIntent_Boot", function()
     hook.Remove("InitPostEntity", "MCP_LaunchIntent_Boot")
     if game.IsDedicated() then return end -- dedi mounts via +workshop_collection_id; nothing to do
     pendingIntent = readIntent()
-    if not pendingIntent then return end
+    if not pendingIntent then
+        -- Eager-check claimed bootstrap was pending but the file is now gone
+        -- or unreadable; clear the flag so _ping doesn't lie.
+        MCP._bootstrap_pending = false
+        return
+    end
 
     startTime = RealTime()
     local maxWait = math.max(1, tonumber(pendingIntent.max_wait_seconds) or 60)

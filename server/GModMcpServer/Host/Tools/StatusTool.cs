@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GModMcpServer.Bridge;
@@ -8,17 +7,15 @@ namespace GModMcpServer.Host.Tools;
 
 public sealed class StatusTool : IHostTool
 {
-    private static readonly TimeSpan PingTimeout = TimeSpan.FromMilliseconds(1500);
-
     private readonly GameProcessManager _proc;
     private readonly ManifestWatcher _manifest;
-    private readonly FileBridgeRegistry _bridges;
+    private readonly BridgePinger _pinger;
 
-    public StatusTool(GameProcessManager proc, ManifestWatcher manifest, FileBridgeRegistry bridges)
+    public StatusTool(GameProcessManager proc, ManifestWatcher manifest, BridgePinger pinger)
     {
         _proc = proc;
         _manifest = manifest;
-        _bridges = bridges;
+        _pinger = pinger;
     }
 
     public string Name => "host_status";
@@ -57,14 +54,19 @@ public sealed class StatusTool : IHostTool
 
         if (snap.Running)
         {
-            var ping = await PingAsync(ct).ConfigureAwait(false);
+            var ping = await _pinger.PingAsync(ct).ConfigureAwait(false);
             bridgeNode["reachable"] = ping.Reachable;
             bridgeNode["latency_ms"] = ping.LatencyMs;
             bridgeNode["enabled"] = ping.Enabled;
+            bridgeNode["map"] = ping.Map;
+            bridgeNode["bootstrap_pending"] = ping.BootstrapPending;
             if (!ping.Reachable)
             {
-                bridgeNode["hint"] = "GMod is running but the bridge didn't respond within "
-                    + (int)PingTimeout.TotalMilliseconds + " ms — likely still loading, or paused on a menu.";
+                bridgeNode["hint"] = "GMod is running but the bridge didn't respond — likely still loading, or paused on a menu.";
+            }
+            else if (ping.BootstrapPending == true)
+            {
+                bridgeNode["hint"] = "Bridge reachable but the host_launch bootstrap is still in progress (workshop mount or post-mount map transition).";
             }
             else if (ping.Enabled == false)
             {
@@ -76,6 +78,8 @@ public sealed class StatusTool : IHostTool
             bridgeNode["reachable"] = false;
             bridgeNode["latency_ms"] = null;
             bridgeNode["enabled"] = null;
+            bridgeNode["map"] = null;
+            bridgeNode["bootstrap_pending"] = null;
         }
 
         var result = new JsonObject
@@ -93,39 +97,4 @@ public sealed class StatusTool : IHostTool
 
         return HostToolHelpers.Ok(result.ToJsonString());
     }
-
-    private async Task<PingResult> PingAsync(CancellationToken ct)
-    {
-        try
-        {
-            var bridge = _bridges.Get("server");
-            using var doc = JsonDocument.Parse("{}");
-            var emptyArgs = doc.RootElement.Clone();
-
-            var sw = Stopwatch.StartNew();
-            var resp = await bridge.SendAsync("_ping", emptyArgs, PingTimeout, ct).ConfigureAwait(false);
-            sw.Stop();
-
-            bool? enabled = null;
-            if (resp.Result is JsonObject obj
-                && obj.TryGetPropertyValue("enabled", out var enNode)
-                && enNode is JsonValue enVal
-                && enVal.TryGetValue<bool>(out var enBool))
-            {
-                enabled = enBool;
-            }
-
-            return new PingResult(true, sw.Elapsed.TotalMilliseconds, enabled);
-        }
-        catch (TaskCanceledException)
-        {
-            return new PingResult(false, null, null);
-        }
-        catch (Exception)
-        {
-            return new PingResult(false, null, null);
-        }
-    }
-
-    private readonly record struct PingResult(bool Reachable, double? LatencyMs, bool? Enabled);
 }

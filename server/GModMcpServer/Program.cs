@@ -42,6 +42,7 @@ internal static class Program
             new ManifestWatcher(mcpRoot, sp.GetRequiredService<ILoggerFactory>().CreateLogger<ManifestWatcher>()));
         builder.Services.AddSingleton<FileBridgeRegistry>(sp =>
             new FileBridgeRegistry(mcpRoot, sessionId, sp.GetRequiredService<ILoggerFactory>()));
+        builder.Services.AddSingleton<BridgePinger>();
 
         builder.Services.AddSingleton<GameProcessManager>(sp =>
             new GameProcessManager(gameRoot, sp.GetRequiredService<ILoggerFactory>().CreateLogger<GameProcessManager>()));

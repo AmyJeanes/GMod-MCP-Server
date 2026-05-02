@@ -91,6 +91,13 @@ public sealed class FileBridge : IDisposable
         finally
         {
             _pending.TryRemove(id, out _);
+            // If the addon hasn't processed our request by the time we time out
+            // or get cancelled, the inbox file would otherwise sit there and get
+            // dispatched once GMod's bridge eventually starts polling — wasted
+            // work for a tcs that's already been resolved. Race-safe: addon-side
+            // processOne is read-then-delete in one Lua tick, so whoever wins
+            // makes the other side's delete a no-op.
+            try { File.Delete(Path.Combine(_inDir, id + ".json")); } catch { /* best effort */ }
         }
     }
 

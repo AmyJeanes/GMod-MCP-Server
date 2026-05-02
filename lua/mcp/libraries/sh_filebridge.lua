@@ -46,6 +46,13 @@ local function processOne(filename)
             ok = true,
             enabled = GetConVar("mcp_enable"):GetBool(),
             realm = MCP.util.RealmName(),
+            map = game.GetMap(),
+            -- True while a host_launch intent is queued or mid-transition. The
+            -- bridge starts polling well before `InitPostEntity` fires, and the
+            -- target map can be the same as the bootstrap map, so map name
+            -- alone isn't a reliable "ready" signal — the .NET host waits on
+            -- this flag instead.
+            bootstrap_pending = MCP._bootstrap_pending == true,
         })
         return
     end

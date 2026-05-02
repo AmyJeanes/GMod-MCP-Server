@@ -44,6 +44,22 @@ public class FileBridgeTests
 	}
 
 	[Test]
+	public async Task Send_OnTimeout_DeletesOwnInboxFile()
+	{
+		// Stops host_launch's repeated pings from queueing up in the inbox while
+		// the addon is still loading — every failed Send should leave nothing
+		// behind for the addon's first pollTick to process in bulk.
+		using var root = new TempBridgeRoot();
+		using var bridge = new FileBridge(root.McpRoot, "server", NewSessionId(), NullLogger.Instance);
+
+		try { await bridge.SendAsync("noop", EmptyArgs, TimeSpan.FromMilliseconds(150), CancellationToken.None); }
+		catch (TaskCanceledException) { /* expected */ }
+
+		var leftovers = Directory.GetFiles(root.InDir("server"), "*.json");
+		Assert.That(leftovers, Is.Empty, "Inbox file should be cleaned up after a timed-out send.");
+	}
+
+	[Test]
 	public async Task Send_PrefixesIdWithSessionGuid()
 	{
 		using var root = new TempBridgeRoot();
