@@ -38,6 +38,8 @@ public sealed class BridgePinger
             bool? enabled = null;
             string? map = null;
             bool? bootstrapPending = null;
+            int? maxPlayers = null;
+            bool? singlePlayer = null;
             if (resp.Result is JsonObject obj)
             {
                 if (obj.TryGetPropertyValue("enabled", out var enNode)
@@ -60,17 +62,32 @@ public sealed class BridgePinger
                 {
                     bootstrapPending = bpBool;
                 }
+
+                // Lua numbers are doubles, so a whole value may arrive as 2 or
+                // 2.0 depending on the encoder — accept either.
+                if (obj.TryGetPropertyValue("maxplayers", out var mpNode) && mpNode is JsonValue mpVal)
+                {
+                    if (mpVal.TryGetValue<int>(out var mpInt)) maxPlayers = mpInt;
+                    else if (mpVal.TryGetValue<double>(out var mpDbl)) maxPlayers = (int)mpDbl;
+                }
+
+                if (obj.TryGetPropertyValue("singleplayer", out var spNode)
+                    && spNode is JsonValue spVal
+                    && spVal.TryGetValue<bool>(out var spBool))
+                {
+                    singlePlayer = spBool;
+                }
             }
 
-            return new BridgePingResult(true, sw.Elapsed.TotalMilliseconds, enabled, map, bootstrapPending);
+            return new BridgePingResult(true, sw.Elapsed.TotalMilliseconds, enabled, map, bootstrapPending, maxPlayers, singlePlayer);
         }
         catch (TaskCanceledException)
         {
-            return new BridgePingResult(false, null, null, null, null);
+            return new BridgePingResult(false, null, null, null, null, null, null);
         }
         catch (Exception)
         {
-            return new BridgePingResult(false, null, null, null, null);
+            return new BridgePingResult(false, null, null, null, null, null, null);
         }
     }
 }
@@ -80,4 +97,6 @@ public readonly record struct BridgePingResult(
     double? LatencyMs,
     bool? Enabled,
     string? Map,
-    bool? BootstrapPending);
+    bool? BootstrapPending,
+    int? MaxPlayers,
+    bool? SinglePlayer);

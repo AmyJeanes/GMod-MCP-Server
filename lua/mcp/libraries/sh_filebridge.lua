@@ -78,6 +78,11 @@ local function processOne(filename)
             enabled = GetConVar("mcp_enable"):GetBool(),
             realm = MCP.util.RealmName(),
             map = game.GetMap(),
+            -- Lets the host report singleplayer vs listen server without a
+            -- lua_run; maxplayers is fixed at launch, so this also tells a
+            -- caller a relaunch is needed to switch modes.
+            maxplayers = game.MaxPlayers(),
+            singleplayer = game.SinglePlayer(),
             -- True while a host_launch intent is queued or mid-transition. The
             -- bridge starts polling well before `InitPostEntity` fires, and the
             -- target map can be the same as the bootstrap map, so map name

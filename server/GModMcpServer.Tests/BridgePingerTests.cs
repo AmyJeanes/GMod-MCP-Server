@@ -20,6 +20,8 @@ public class BridgePingerTests
                 ["enabled"] = true,
                 ["realm"] = "server",
                 ["map"] = "gm_construct",
+                ["maxplayers"] = 16,
+                ["singleplayer"] = false,
                 ["bootstrap_pending"] = false,
             };
         });
@@ -33,9 +35,32 @@ public class BridgePingerTests
             Assert.That(result.Reachable, Is.True);
             Assert.That(result.Enabled, Is.True);
             Assert.That(result.Map, Is.EqualTo("gm_construct"));
+            Assert.That(result.MaxPlayers, Is.EqualTo(16));
+            Assert.That(result.SinglePlayer, Is.False);
             Assert.That(result.BootstrapPending, Is.False);
             Assert.That(result.LatencyMs, Is.Not.Null);
         });
+    }
+
+    [Test]
+    public async Task PingAsync_WhenMaxplayersIsWholeDouble_TruncatesToInt()
+    {
+        // Lua numbers are doubles; depending on the JSON encoder a whole value
+        // can arrive as 2.0 rather than 2. The pinger must still decode it.
+        using var root = new TempBridgeRoot();
+        using var responder = new FakeGmodResponder(root.McpRoot, "server", _ =>
+            new JsonObject
+            {
+                ["ok"] = true,
+                ["maxplayers"] = 2.0,
+                ["singleplayer"] = false,
+            });
+        using var registry = new FileBridgeRegistry(root.McpRoot, NewSessionId(), NullLoggerFactory.Instance);
+        var pinger = new BridgePinger(registry);
+
+        var result = await pinger.PingAsync(CancellationToken.None);
+
+        Assert.That(result.MaxPlayers, Is.EqualTo(2));
     }
 
     [Test]
@@ -82,6 +107,8 @@ public class BridgePingerTests
             Assert.That(result.Reachable, Is.True);
             Assert.That(result.Enabled, Is.Null);
             Assert.That(result.Map, Is.Null);
+            Assert.That(result.MaxPlayers, Is.Null);
+            Assert.That(result.SinglePlayer, Is.Null);
             Assert.That(result.BootstrapPending, Is.Null);
         });
     }

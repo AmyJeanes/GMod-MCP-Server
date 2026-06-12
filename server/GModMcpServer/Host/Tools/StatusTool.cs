@@ -59,6 +59,8 @@ public sealed class StatusTool : IHostTool
             bridgeNode["latency_ms"] = ping.LatencyMs;
             bridgeNode["enabled"] = ping.Enabled;
             bridgeNode["map"] = ping.Map;
+            bridgeNode["maxplayers"] = ping.MaxPlayers;
+            bridgeNode["singleplayer"] = ping.SinglePlayer;
             bridgeNode["bootstrap_pending"] = ping.BootstrapPending;
             if (!ping.Reachable)
             {
@@ -79,6 +81,8 @@ public sealed class StatusTool : IHostTool
             bridgeNode["latency_ms"] = null;
             bridgeNode["enabled"] = null;
             bridgeNode["map"] = null;
+            bridgeNode["maxplayers"] = null;
+            bridgeNode["singleplayer"] = null;
             bridgeNode["bootstrap_pending"] = null;
         }
 

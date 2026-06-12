@@ -114,7 +114,7 @@ Gating: capture runs only while `mcp_enable` is `1`; the `mcp_capture` convar (`
 
 Function ids prefixed with `_` are intercepted by the bridge before reaching `MCP:Dispatch` — they bypass the `mcp_enable` gate and don't appear in the manifest.
 
-- `_ping` — health check used by `host_status`. Returns `{ ok = true, enabled = <mcp_enable bool>, realm = "server"|"client" }`.
+- `_ping` — health check used by `host_status` and `host_launch`'s readiness wait. Bypasses the `mcp_enable` gate. Returns `{ ok = true, enabled = <mcp_enable bool>, realm = "server"|"client", map = <current map>, maxplayers = <int>, singleplayer = <bool>, bootstrap_pending = <bool> }`. `maxplayers`/`singleplayer` let the host report listen-server vs singleplayer — and, because maxplayers is fixed at launch, signal that switching modes needs a relaunch. `bootstrap_pending` is true while a `host_launch` intent is queued or mid-transition. Older addon builds may omit the optional fields; the host decodes them as null.
 
 ## Capability gating
 

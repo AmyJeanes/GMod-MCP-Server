@@ -27,7 +27,8 @@ public sealed class LaunchTool : IHostTool
 
     public string Description =>
         "Launch Garry's Mod and wait until the MCP bridge is fully ready before returning. " +
-        "Defaults: gm_construct map, sandbox, console open, native resolution from GMod's own config. " +
+        "Defaults: gm_construct map, sandbox, console open, native resolution from GMod's own config, " +
+        "singleplayer (pass maxplayers > 1 to boot a listen/multiplayer server instead). " +
         "Workshop maps and player models work because the launcher boots into a stock bootstrap map first " +
         "and the addon transitions to the real target once Steam has finished mounting subscriptions; " +
         "this tool blocks across both stages so callers don't have to poll. " +
@@ -41,6 +42,7 @@ public sealed class LaunchTool : IHostTool
       "properties": {
         "map":          { "type": "string",  "description": "Map to load (default: gm_construct). Workshop maps work — the launcher bootstraps gm_construct, waits for the workshop subscription to mount, then transitions to the target. Empty string boots to the main menu." },
         "gamemode":     { "type": "string",  "description": "Gamemode (default: sandbox)." },
+        "maxplayers":   { "type": "integer", "description": "Player slots, 1-128. Omit or 1 = singleplayer (default). >1 boots a LISTEN (multiplayer) server — needed for bots, a second client, or any multiplayer-only behaviour. Fixed at launch: maxplayers can't change on a running game, so switching modes means host_close then host_launch." },
         "console":      { "type": "boolean", "description": "Open the developer console window (default: true)." },
         "windowed":     { "type": "boolean", "description": "Force windowed (true) or fullscreen (false). Omit to keep whatever GMod has configured — that's the default and what the user usually wants." },
         "width":        { "type": "integer", "description": "Override window width. Omit to use GMod's configured resolution." },
@@ -68,6 +70,13 @@ public sealed class LaunchTool : IHostTool
         var extra = HostToolHelpers.GetStringArray(args, "extra_args");
         var waitForBridge = HostToolHelpers.GetBool(args, "wait_for_bridge", true);
         var waitTimeout = HostToolHelpers.GetInt(args, "wait_timeout_seconds", 180);
+        var maxPlayers = HostToolHelpers.GetIntOrNull(args, "maxplayers");
+
+        if (maxPlayers is int requested && (requested < 1 || requested > 128))
+        {
+            var bad = new JsonObject { ["ok"] = false, ["error"] = $"maxplayers must be between 1 and 128 (got {requested})." };
+            return HostToolHelpers.Err(bad.ToJsonString());
+        }
 
         // Decide whether to use the two-stage bootstrap. Direct mode (skip_bootstrap=true)
         // or "boot to menu" (empty map) goes straight to the legacy +map path.
@@ -103,6 +112,13 @@ public sealed class LaunchTool : IHostTool
             argList.Add("+gamemode"); argList.Add(bootGamemode);
         }
         argList.AddRange(extra);
+        if (maxPlayers is int slots && slots > 1)
+        {
+            // maxplayers is locked at the first server init, so it must be on
+            // the command line: the bootstrap's gm_construct boot then comes up
+            // multiplayer and the map transition preserves the slot count.
+            argList.Add("+maxplayers"); argList.Add(slots.ToString());
+        }
         if (!string.IsNullOrEmpty(bootMap))
         {
             argList.Add("+map"); argList.Add(bootMap);
@@ -156,6 +172,8 @@ public sealed class LaunchTool : IHostTool
                 ["reachable"] = lastPing.Reachable,
                 ["enabled"] = lastPing.Enabled,
                 ["map"] = lastPing.Map,
+                ["maxplayers"] = lastPing.MaxPlayers,
+                ["singleplayer"] = lastPing.SinglePlayer,
                 ["bootstrap_pending"] = lastPing.BootstrapPending,
             },
         };
