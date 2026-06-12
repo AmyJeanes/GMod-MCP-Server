@@ -23,6 +23,37 @@ local function writeResponse(reqId, response)
         MCP.util.JsonEncode({ id = reqId, result = response }, false))
 end
 
+-- Piggyback passive console/error events (sh_capture.lua) onto a dispatch
+-- response so the model sees output that fired outside a tool call. The per-
+-- session cursor (the request id is `<session>__<uuid>`) keeps each connected
+-- MCP host's stream non-duplicative. Realm-local: this is the responding
+-- realm's own ring.
+local function attachEvents(reqId, response)
+    if type(response) ~= "table" then return end
+    if not MCP.DrainEventsSince then return end
+    -- Don't clobber a tool that returned its own `events` (console_read).
+    if response.events ~= nil then return end
+
+    local session = string.match(tostring(reqId), "^(.-)__")
+    if not session or session == "" then session = tostring(reqId) end
+
+    MCP._sessionCursor = MCP._sessionCursor or {}
+    local cursor = MCP._sessionCursor[session]
+    if cursor == nil then
+        -- First contact: start at "now" so a newly-connected host doesn't get
+        -- the existing backlog (possibly a prior session's) dumped on it. It
+        -- sees events from here on; history is available via console_read.
+        MCP._sessionCursor[session] = MCP:CurrentEventSeq()
+        return
+    end
+
+    local evts, maxSeq = MCP:DrainEventsSince(cursor)
+    if #evts > 0 then
+        response.events = evts
+        MCP._sessionCursor[session] = maxSeq
+    end
+end
+
 local function processOne(filename)
     local inboxPath = inboxDir() .. "/" .. filename
     local raw = file.Read(inboxPath, "DATA")
@@ -58,11 +89,13 @@ local function processOne(filename)
     end
 
     local response = MCP:Dispatch(req.function_id, req.args, function(deferredResponse)
+        attachEvents(req.id, deferredResponse)
         writeResponse(req.id, deferredResponse)
     end)
     -- Sync handlers return the response directly; deferred handlers return nil
     -- and resolve later via the respondLater callback above.
     if response then
+        attachEvents(req.id, response)
         writeResponse(req.id, response)
     end
 end
@@ -72,6 +105,10 @@ local function pollTick()
     local interval = math.max(0.05, GetConVar("mcp_poll_interval"):GetFloat())
     if (now - MCP._lastPoll) < interval then return end
     MCP._lastPoll = now
+
+    -- Pick up runtime mcp_enable/mcp_capture changes (the client convars aren't
+    -- Lua-created, so change-callbacks don't fire — see sh_capture.lua).
+    if MCP.ReconcileCapture then MCP:ReconcileCapture() end
 
     local files = file.Find(inboxDir() .. "/*.json", "DATA")
     if not files or #files == 0 then return end
@@ -115,6 +152,9 @@ function MCP:StartBridge()
         end
     end
 
+    -- Reset per-session passive-event cursors; old sessions are gone.
+    MCP._sessionCursor = {}
+
     -- Cancel any debounced auto-write scheduled by AddFunction/AddCapability —
     -- we're about to do a fresh synchronous write below.
     if timer.Exists("MCP_ManifestWrite") then timer.Remove("MCP_ManifestWrite") end
@@ -122,6 +162,13 @@ function MCP:StartBridge()
 
     hook.Add("Think", self._hookName, pollTick)
     applyPauseGuard()
+
+    -- Apply passive-capture state now that convars exist (self-gates on
+    -- mcp_enable); the poll loop reconciles later convar changes.
+    if MCP.ReconcileCapture then
+        MCP._captureSig = nil
+        MCP:ReconcileCapture()
+    end
 
     print("[MCP] Bridge polling started (" .. MCP.util.RealmName() .. ").")
 end

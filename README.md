@@ -36,6 +36,21 @@ Each .NET MCP host generates a per-process session GUID and prefixes its request
 
 See `docs/protocol.md` for the wire format.
 
+## Console & error capture
+
+Output and errors that happen *during* a tool call are already returned on that call's response (`console` / `warnings`). Anything that fires **outside** a tool call — a hook the assistant registered firing later, a timer, an autorefresh re-run, another addon erroring — would otherwise be invisible. Passive capture records these into a small per-realm ring buffer and surfaces them to the model two ways, both over the existing bridge (MCP has no way to push unsolicited messages into the model's context, so there's no notification channel — it rides tool results):
+
+- **Attached to the next tool response** as an `events` array (per-session cursor, so it isn't re-sent).
+- **On demand** via the `console_read_sv` / `console_read_cl` tools (pass back the returned `cursor` as `since` to get only newer events).
+
+It's realm-local — `_sv` shows server-side errors/prints, `_cl` shows client-side. Controlled by `mcp_capture` (only active while `mcp_enable` is `1`):
+
+```
+mcp_capture 2   # default: Lua errors + console (print/Msg)
+mcp_capture 1   # Lua errors only
+mcp_capture 0   # off
+```
+
 ## Adding tools
 
 Drop a Lua file in `lua/mcp/functions/` with the conventional `sh_/cl_/sv_` prefix. The realm is implicit from the prefix, and the framework appends `_sv`/`_cl` to the MCP tool name automatically:

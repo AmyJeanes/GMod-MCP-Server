@@ -91,6 +91,25 @@ The `result` object is whatever the function's handler returned. By convention:
 
 When the .NET host sees `ok = false` in the result, it sets `isError: true` on the MCP `tools/call` response so the assistant treats it as a failure.
 
+## Passive events / console capture
+
+`captureRun` (sh_module.lua) captures `print`/`Msg`/`MsgN`/`MsgC` output and non-fatal `OnLuaError` warnings produced *synchronously during a handler*, and returns them as `console` (string) and `warnings` (array) on that handler's response.
+
+Output and errors that fire **outside** a handler — a hook registered earlier, a timer, an autorefresh re-run, the async tail of a deferred handler, another addon — are recorded separately by sh_capture.lua into a bounded, per-realm in-memory ring (last ~200), each event stamped with a process-monotonic `seq`:
+
+```json
+{ "seq": 41, "time": 12.34, "kind": "error", "text": "addons/foo/lua/x.lua:5: attempt to index a nil value" }
+```
+
+`kind` is `error` (from `OnLuaError`), `print`, or `msg`. There is **no server→client push** — MCP clients (Claude Code included) don't deliver unsolicited notifications to the model — so these reach the model only on tool results, two ways:
+
+- **Attached to the next dispatch response** as an `events` array. A per-session cursor (keyed off the `<session>__` prefix of the request id) means each connected MCP host only gets events it hasn't seen. A session's first request starts the cursor at the current high-water mark — **forward-only** — so a newly-connected host isn't handed the existing backlog (which may be another session's history); that backlog is still reachable via `console_read`. `_ping` and tools that return their own `events` (i.e. `console_read`) are left untouched.
+- **Polled** via the `console_read` tool (`console_read_sv` / `console_read_cl`): args `{ since?, limit? }`, returns `{ ok, events, cursor, dropped }`. Pass the returned `cursor` back as `since` next call; `dropped` is true when events between the cursor and the oldest retained event were evicted (or were trimmed by `limit`). A `since` greater than the current max (e.g. a stale cursor after a GMod restart reset the counter) is treated as "from the start".
+
+Capture is **realm-local** — the two realms are separate Lua states, so `_sv` responses/`console_read_sv` carry server-side events and `_cl` the client-side ones; there is no merge.
+
+Gating: capture runs only while `mcp_enable` is `1`; the `mcp_capture` convar (`0` off / `1` errors only / `2` errors + console, default `2`) is the scope/perf knob. While inactive, the `OnLuaError` hook and console detours aren't installed, so there's no overhead. Exposure (attach + `console_read`) also routes through `MCP:Dispatch`, which gates on `mcp_enable`.
+
 ## Bridge-internal functions
 
 Function ids prefixed with `_` are intercepted by the bridge before reaching `MCP:Dispatch` — they bypass the `mcp_enable` gate and don't appear in the manifest.

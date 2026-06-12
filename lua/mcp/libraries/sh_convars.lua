@@ -22,3 +22,10 @@ if not ConVarExists("mcp_debug") then
     CreateConVar("mcp_debug", "0", localFlags,
         "MCP dispatch logging: 0=silent, 1=one-liner per request, 2=one-liner + args + result.")
 end
+
+-- Passive console/error capture scope. Only takes effect while mcp_enable is 1
+-- (see sh_capture.lua). FCVAR_ARCHIVE so the choice persists across restarts.
+if not ConVarExists("mcp_capture") then
+    CreateConVar("mcp_capture", "2", localFlags,
+        "Passive capture for the model: 0=off, 1=Lua errors only, 2=errors + console (print/Msg). Active only when mcp_enable is 1.")
+end

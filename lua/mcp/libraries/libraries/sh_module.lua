@@ -166,7 +166,12 @@ local function captureRun(fn, args, ctx)
         warnings[#warnings + 1] = tostring(errMsg)
     end)
 
+    -- Tell the passive capture layer (sh_capture.lua) to stand down for the
+    -- duration of the handler: its output is already captured above and goes
+    -- into this response, so it must not also land in the passive ring.
+    MCP._inDispatch = true
     local ok, ret = pcall(fn, args, ctx)
+    MCP._inDispatch = false
 
     _G.print, _G.Msg, _G.MsgN, _G.MsgC = origPrint, origMsg, origMsgN, origMsgC
     hook.Remove("OnLuaError", hookId)
@@ -192,8 +197,9 @@ local function logDispatch(funcId, args, response, elapsedMs)
     MsgN(string.format("[MCP] %s.%s %s (%.1fms)", realm, funcId, outcome, elapsedMs))
 
     if level >= 2 then
-        MsgN("  args:   " .. safeEncode(args))
-        MsgN("  result: " .. safeEncode(response))
+        -- [MCP]-prefixed so passive capture (sh_capture.lua) filters these out.
+        MsgN("[MCP]   args:   " .. safeEncode(args))
+        MsgN("[MCP]   result: " .. safeEncode(response))
     end
 end
 

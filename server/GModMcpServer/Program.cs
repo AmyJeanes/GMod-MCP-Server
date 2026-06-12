@@ -15,6 +15,18 @@ namespace GModMcpServer;
 
 internal static class Program
 {
+    // Sent to MCP clients in the initialize handshake; clients (Claude Code
+    // included) surface it to the model as system context. Explains the passive
+    // `events` array that rides on tool results — MCP can't push these to the
+    // model, so they piggyback on responses. See sh_capture.lua / docs/protocol.md.
+    private const string ServerInstructionsText =
+        "Some tool results from this Garry's Mod bridge include an \"events\" array: " +
+        "console output and Lua errors that happened passively in the game (outside the " +
+        "tool call) since this session's previous call — e.g. background hooks, timers, " +
+        "autorefresh, or other addons. Treat \"events\" as game-side diagnostic context, " +
+        "not part of the tool's primary result. The console_read_sv and console_read_cl " +
+        "tools poll the same buffer on demand.";
+
     public static async Task<int> Main(string[] args)
     {
         var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(args);
@@ -54,7 +66,7 @@ internal static class Program
         builder.Services.AddSingleton<IHostTool, StatusTool>();
 
         builder.Services
-            .AddMcpServer()
+            .AddMcpServer(options => options.ServerInstructions = ServerInstructionsText)
             .WithStdioServerTransport()
             .WithListToolsHandler(ListToolsAsync)
             .WithCallToolHandler(CallToolAsync);
