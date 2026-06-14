@@ -49,7 +49,7 @@ internal static class Program
         // data dir don't read each other's request/response files.
         var sessionId = Guid.NewGuid().ToString("N");
 
-        builder.Services.AddSingleton(new BridgePaths(mcpRoot, sessionId));
+        builder.Services.AddSingleton(new BridgePaths(mcpRoot, sessionId, dataPath));
         builder.Services.AddSingleton<ManifestWatcher>(sp =>
             new ManifestWatcher(mcpRoot, sp.GetRequiredService<ILoggerFactory>().CreateLogger<ManifestWatcher>()));
         builder.Services.AddSingleton<FileBridgeRegistry>(sp =>
@@ -189,6 +189,7 @@ internal static class Program
 
         var watcher = services.GetRequiredService<ManifestWatcher>();
         var bridges = services.GetRequiredService<FileBridgeRegistry>();
+        var paths = services.GetRequiredService<BridgePaths>();
 
         if (!watcher.Current.Tools.TryGetValue(name, out var descriptor))
         {
@@ -222,7 +223,7 @@ internal static class Program
 
             return new CallToolResult
             {
-                Content = BuildContent(resp.Result, resultJson),
+                Content = BuildContent(resp.Result, resultJson, paths.DataPath),
                 IsError = !ok,
             };
         }
@@ -248,7 +249,7 @@ internal static class Program
     /// entry is mapped to its native block type. Otherwise the whole result
     /// JSON is dumped as a single text block, preserving the legacy behaviour.
     /// </summary>
-    private static List<ContentBlock> BuildContent(JsonNode? result, string fallbackJson)
+    private static List<ContentBlock> BuildContent(JsonNode? result, string fallbackJson, string dataPath)
     {
         if (result is JsonObject obj
             && obj.TryGetPropertyValue("content", out var contentNode)
@@ -284,14 +285,46 @@ internal static class Program
                         break;
                 }
             }
-            if (blocks.Count > 0) return blocks;
+            if (blocks.Count > 0)
+            {
+                AppendAbsolutePath(blocks, result, dataPath);
+                return blocks;
+            }
         }
 
         return new List<ContentBlock> { new TextContentBlock { Text = fallbackJson } };
     }
+
+    /// <summary>
+    /// A bridge tool may return a top-level data-relative <c>path</c> (e.g. a
+    /// saved screenshot). GMod Lua can't know its own absolute install path, but
+    /// the host does (--data-path), so resolve it to a full disk path and surface
+    /// it — an agent on this machine can then read the file without knowing where
+    /// GMod lives. Guarded to stay within the data dir.
+    /// </summary>
+    private static void AppendAbsolutePath(List<ContentBlock> blocks, JsonNode? result, string dataPath)
+    {
+        if (result is not JsonObject obj) return;
+        if (!obj.TryGetPropertyValue("path", out var node)) return;
+        if (node is not JsonValue val || !val.TryGetValue<string>(out var rel) || string.IsNullOrEmpty(rel)) return;
+
+        string abs, root;
+        try
+        {
+            abs = Path.GetFullPath(Path.Combine(dataPath, rel));
+            root = Path.GetFullPath(dataPath);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (!abs.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return;
+        blocks.Add(new TextContentBlock { Text = "Saved to " + abs });
+    }
 }
 
-public sealed record BridgePaths(string McpRoot, string SessionId);
+public sealed record BridgePaths(string McpRoot, string SessionId, string DataPath);
 
 public sealed class FileBridgeRegistry : IDisposable
 {

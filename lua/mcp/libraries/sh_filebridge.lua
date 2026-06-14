@@ -34,8 +34,7 @@ local function attachEvents(reqId, response)
     -- Don't clobber a tool that returned its own `events` (console_read).
     if response.events ~= nil then return end
 
-    local session = string.match(tostring(reqId), "^(.-)__")
-    if not session or session == "" then session = tostring(reqId) end
+    local session = MCP:SessionFromRequestId(reqId)
 
     MCP._sessionCursor = MCP._sessionCursor or {}
     local cursor = MCP._sessionCursor[session]
@@ -96,7 +95,7 @@ local function processOne(filename)
     local response = MCP:Dispatch(req.function_id, req.args, function(deferredResponse)
         attachEvents(req.id, deferredResponse)
         writeResponse(req.id, deferredResponse)
-    end)
+    end, req.id)
     -- Sync handlers return the response directly; deferred handlers return nil
     -- and resolve later via the respondLater callback above.
     if response then

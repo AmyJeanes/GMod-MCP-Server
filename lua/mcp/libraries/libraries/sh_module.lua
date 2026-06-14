@@ -203,11 +203,20 @@ local function logDispatch(funcId, args, response, elapsedMs)
     end
 end
 
+-- The .NET host prefixes every request id with `<session>__` — one session GUID
+-- per connected host. Exposed on ctx so tools can namespace per-caller state
+-- (e.g. saved files) and concurrent hosts don't collide.
+function MCP:SessionFromRequestId(reqId)
+    local s = string.match(tostring(reqId), "^(.-)__")
+    if not s or s == "" then s = tostring(reqId) end
+    return s
+end
+
 -- Dispatch returns either a final response table (sync handler) or nil
 -- (deferred). When nil, the handler is expected to call `ctx.respond(result)`
 -- exactly once; the bridge passes a `respondLater` callback that writes that
 -- response when it eventually arrives.
-function MCP:Dispatch(funcId, args, respondLater)
+function MCP:Dispatch(funcId, args, respondLater, reqId)
     local startSec = SysTime()
     local response
 
@@ -230,6 +239,7 @@ function MCP:Dispatch(funcId, args, respondLater)
                 local resolved = false
                 local ctx = {
                     deferred = MCP._DEFERRED,
+                    session = reqId and self:SessionFromRequestId(reqId) or nil,
                     respond = function(deferredResponse)
                         if resolved then return end
                         resolved = true

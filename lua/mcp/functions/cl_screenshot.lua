@@ -27,6 +27,16 @@
 local DEFAULT_W, DEFAULT_H = 1280, 720
 local DEFAULT_FOV = 90
 
+-- Every saved screenshot lives under this one data/ subfolder (then a
+-- per-session subfolder), so the startup wipe below has a single, well-defined
+-- place to clear.
+local SCREENSHOT_DIR = "mcp/screenshots"
+
+-- Per-session monotonic counter for screenshot filenames. Kept on the MCP
+-- table so it survives autorefresh; a fresh game start (new Lua state) resets
+-- it, which lines up with the startup folder wipe.
+MCP._screenshotSeq = MCP._screenshotSeq or {}
+
 local function uniqueHookId()
     return "MCP_Screenshot_" .. tostring(SysTime()) .. "_" .. tostring(math.random(1, 1e9))
 end
@@ -85,9 +95,25 @@ local function restoreWorldPortalRTs(saved)
     end
 end
 
+-- Clear screenshots left by previous runs so the folder never grows unbounded.
+-- Fires once on client startup; re-registering on autorefresh is harmless since
+-- Initialize only runs at genuine startup, never on reload.
+local function wipeScreenshotDir(dir)
+    dir = dir or SCREENSHOT_DIR
+    local files, dirs = file.Find(dir .. "/*", "DATA")
+    for _, f in ipairs(files or {}) do
+        file.Delete(dir .. "/" .. f)
+    end
+    for _, d in ipairs(dirs or {}) do
+        wipeScreenshotDir(dir .. "/" .. d)
+        file.Delete(dir .. "/" .. d)
+    end
+end
+hook.Add("Initialize", "MCP_ScreenshotDirWipe", function() wipeScreenshotDir() end)
+
 MCP:AddFunction({
     id = "screenshot",
-    description = "Capture a JPEG screenshot. Without `origin`/`angles` returns a render of the local player's current viewport. Supplying `origin`+`angles` (and optional `fov`) re-renders the world from that arbitrary camera without moving the player. Output is downscaled to a sensible resolution (default 1280x720) regardless of the user's actual screen size.",
+    description = "Capture a JPEG screenshot. Without `origin`/`angles` returns a render of the local player's current viewport. Supplying `origin`+`angles` (and optional `fov`) re-renders the world from that arbitrary camera without moving the player. Output is downscaled to a sensible resolution (default 1280x720) regardless of the user's actual screen size. Every shot is ALWAYS saved under data/mcp/screenshots/<session>/ with an auto-generated name (seq_time_mode, e.g. 0003_153122_player.jpg) and that path is returned as text; the folder is wiped on each game startup. By default only the path is returned (so a human can watch the folder live, or an out-of-band analyzer like Gemini can read it without the bytes entering the agent's context); pass `inline=true` to also receive the raw image.",
     schema = {
         type = "object",
         properties = {
@@ -129,6 +155,10 @@ MCP:AddFunction({
                 minimum = 1,
                 maximum = 100,
             },
+            inline = {
+                type = "boolean",
+                description = "When true, also return the raw JPEG inline so the calling agent can see the image directly (costs context tokens). Default false: only the saved file path is returned — open it live, or hand it to an out-of-band analyzer (e.g. Gemini) without the bytes entering the agent's context.",
+            },
         },
     },
     handler = function(args, ctx)
@@ -152,6 +182,17 @@ MCP:AddFunction({
             angles = Angle(ap, ay, ar)
             fov = math.Clamp(tonumber(args.fov) or DEFAULT_FOV, 1, 179)
         end
+
+        local inline = args.inline == true
+
+        -- Each shot is saved under a per-session folder so concurrent MCP hosts
+        -- never clobber each other; the seq_time_mode filename is built at write
+        -- time. ctx.session is already filename-safe (IsSafeId-gated) but
+        -- sanitize defensively in case a non-bridge caller supplied it.
+        local sess = string.gsub(tostring(ctx and ctx.session or ""), "[^%w%.%-]", "")
+        if sess == "" then sess = "local" end
+        local sessionDir = SCREENSHOT_DIR .. "/" .. sess
+        local mode = customView and "freecam" or "player"
 
         local hookId = uniqueHookId()
         local fired = false
@@ -237,12 +278,6 @@ MCP:AddFunction({
                 return
             end
 
-            local encOk, encoded = pcall(util.Base64Encode, data, true)
-            if not encOk or type(encoded) ~= "string" then
-                finish({ ok = false, error = "Base64Encode failed: " .. tostring(encoded) })
-                return
-            end
-
             local desc
             if customView and origin and angles and fov then
                 desc = string.format(
@@ -262,20 +297,36 @@ MCP:AddFunction({
                 desc = string.format("%dx%d JPEG @ q=%d (%d bytes).", outW, outH, quality, #data)
             end
 
-            finish({
-                ok = true,
-                content = {
-                    {
-                        type = "image",
-                        data = encoded,
-                        mimeType = "image/jpeg",
-                    },
-                    {
-                        type = "text",
-                        text = desc,
-                    },
-                },
-            })
+            -- Always persist the shot so a human can watch the folder live;
+            -- embed the bytes inline only when the caller opted in. Seq is bumped
+            -- here, post-capture, so a failed render doesn't leave a gap.
+            local seq = (MCP._screenshotSeq[sess] or 0) + 1
+            MCP._screenshotSeq[sess] = seq
+            local savePath = string.format("%s/%04d_%s_%s.jpg", sessionDir, seq, os.date("%H%M%S"), mode)
+
+            file.CreateDir(sessionDir)
+            local wOk, wErr = pcall(file.Write, savePath, data)
+            if not wOk then
+                finish({ ok = false, error = "file.Write failed for data/" .. savePath .. ": " .. tostring(wErr) })
+                return
+            end
+            if not file.Exists(savePath, "DATA") then
+                finish({ ok = false, error = "wrote data/" .. savePath .. " but it is not present afterward" })
+                return
+            end
+
+            -- `path` is data-relative; the .NET host resolves it to an absolute
+            -- disk path (it knows --data-path; GMod Lua can't) and appends that.
+            local content = { { type = "text", text = desc } }
+            if inline then
+                local encOk, encoded = pcall(util.Base64Encode, data, true)
+                if not encOk or type(encoded) ~= "string" then
+                    finish({ ok = false, error = "Base64Encode failed: " .. tostring(encoded) })
+                    return
+                end
+                table.insert(content, 1, { type = "image", data = encoded, mimeType = "image/jpeg" })
+            end
+            finish({ ok = true, content = content, path = savePath })
         end)
 
         -- Think-based fallback: if PostRender never fires (window minimised,
