@@ -25,7 +25,7 @@ The repo is the GMod addon: clone it directly into `garrysmod/addons/`. The .NET
    mcp_enable 1
    mcp_allow_unsafe 1
    ```
-   These are `FCVAR_ARCHIVE`, so once set they persist across game restarts.
+   These are `FCVAR_ARCHIVE`, so once set they persist across game restarts — as long as GMod is shut down cleanly. It writes these to `cfg/server.vdf` only on a clean window-close, never on a kill, so `host_close` does a clean shutdown by default (`force: true` skips it and loses grants set that session).
 5. **Verify**: `mcp__gmod__lua_run_sv` and `mcp__gmod__lua_run_cl` (game-side, dispatched through the file bridge) plus `mcp__gmod__host_launch`, `host_close`, `host_status` (host-side, run by the .NET process) should appear in your assistant's tool list. `host_status` will report `bridge.reachable: true` once GMod is running and responsive.
 
 ## How it works

@@ -14,14 +14,18 @@ public sealed class CloseTool : IHostTool
 
     public string Description =>
         "Close the running GMod process (located by name, regardless of who launched it). " +
-        "Tries CloseMainWindow first with a graceful timeout, then kills the process tree " +
-        "if it does not exit in time.";
+        "By default does a clean shutdown — posts the window-close signal so GMod saves its " +
+        "config, which is the only way capability grants (mcp_allow_*) and mcp_enable set this " +
+        "session persist to the next launch — waiting up to graceful_seconds before falling back " +
+        "to a kill. Pass force=true to skip straight to killing the process tree (faster, but the " +
+        "config is not saved so this-session grants are lost).";
 
     public JsonElement InputSchema { get; } = HostToolHelpers.ParseSchema("""
     {
       "type": "object",
       "properties": {
-        "graceful_seconds": { "type": "number", "description": "Seconds to wait for clean shutdown before killing (default: 3)." }
+        "force":            { "type": "boolean", "description": "Kill the process tree immediately instead of a clean shutdown. Faster, but GMod won't save its config — capability grants and mcp_enable set this session are lost (default: false)." },
+        "graceful_seconds": { "type": "number",  "description": "How long to wait for the clean shutdown to finish before falling back to a kill (default: 10). Ignored when force=true." }
       },
       "required": []
     }
@@ -29,21 +33,45 @@ public sealed class CloseTool : IHostTool
 
     public ValueTask<CallToolResult> InvokeAsync(IDictionary<string, JsonElement>? args, CancellationToken ct)
     {
-        var seconds = 3.0;
+        var force = HostToolHelpers.GetBool(args, "force", false);
+        var seconds = 10.0;
         if (args is not null && args.TryGetValue("graceful_seconds", out var v)
             && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var s))
         {
             seconds = Math.Max(0, s);
         }
 
-        if (!_proc.IsRunning)
+        var method = force ? _proc.Close(TimeSpan.Zero) : _proc.Close(TimeSpan.FromSeconds(seconds));
+
+        if (method == CloseMethod.NotRunning)
         {
             var notRunning = new JsonObject { ["ok"] = true, ["closed"] = false, ["reason"] = "no gmod.exe process is currently running" };
             return ValueTask.FromResult(HostToolHelpers.Ok(notRunning.ToJsonString()));
         }
 
-        var closed = _proc.Close(TimeSpan.FromSeconds(seconds));
-        var result = new JsonObject { ["ok"] = closed, ["closed"] = closed };
-        return ValueTask.FromResult(closed ? HostToolHelpers.Ok(result.ToJsonString()) : HostToolHelpers.Err(result.ToJsonString()));
+        var clean = method == CloseMethod.CleanWindowClose;
+        var result = new JsonObject
+        {
+            ["ok"] = true,
+            ["closed"] = true,
+            ["method"] = method switch
+            {
+                CloseMethod.CleanWindowClose => "clean",
+                CloseMethod.KilledAfterTimeout => "killed_after_timeout",
+                _ => "killed",
+            },
+            ["config_saved"] = clean,
+        };
+        if (method == CloseMethod.KilledAfterTimeout)
+        {
+            result["note"] = "Clean shutdown didn't finish within graceful_seconds; killed. GMod config (capability grants) may not have been saved.";
+        }
+        else if (method == CloseMethod.Killed)
+        {
+            result["note"] = force
+                ? "Force-killed as requested; GMod config was not saved, so capability grants set this session won't persist."
+                : "Killed without a clean shutdown; GMod config was not saved, so capability grants set this session won't persist.";
+        }
+        return ValueTask.FromResult(HostToolHelpers.Ok(result.ToJsonString()));
     }
 }

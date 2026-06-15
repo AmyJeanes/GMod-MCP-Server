@@ -101,7 +101,7 @@ Editing an existing Lua tool file is enough — no console command needed. GMod'
 
 `mcp_reload` is still available for forced rebuilds (e.g. when a tool file has been *deleted* — autorefresh has nothing to fire on for removals).
 
-ConVar values (capability gates, `mcp_enable`) are `FCVAR_ARCHIVE` so they persist across reloads and across game restarts.
+ConVar values (capability gates, `mcp_enable`) are `FCVAR_ARCHIVE` so they persist across reloads. Persisting across a game *restart* additionally needs a clean shutdown: GMod writes its archived server convars to `cfg/server.vdf` only on a proper window-close, so `host_close` does that by default (see Process tracking) — a force-kill loses any grants set that session.
 
 ## Multi-host file IPC
 
@@ -110,3 +110,5 @@ Multiple .NET MCP hosts can share the same GMod data dir (e.g. Claude Code + MCP
 ## Process tracking (host_launch / host_close)
 
 `GameProcessManager` finds GMod via `Process.GetProcessesByName("gmod")` rather than holding the handle returned by `Process.Start`. The launcher chain re-execs itself within seconds on Windows, so the original handle goes stale fast — but only one `gmod.exe` is ever running at a time (Steam blocks duplicates), so a name lookup is both reliable and survives .NET host restarts. `_lastArgs` is in-memory state — populated only when *this* .NET process called Launch — and is informational.
+
+`host_close` defaults to a **clean** shutdown so GMod saves its config (capability grants / `mcp_enable` → `cfg/server.vdf`, written only on a real window-close). Lua can't quit (the engine blocklists `quit` on every Lua path: `game.ConsoleCommand`, `RunConsoleCommand`, `Player:ConCommand`) and a raw `WM_CLOSE` is ignored, so it posts the X-button signal (`WM_SYSCOMMAND`/`SC_CLOSE`) to the visible "Garry's Mod" window — found by enumerating top-level windows across all gmod PIDs, since the launcher spawns several (CEF/Steam helpers) and `MainWindowHandle` is unreliable. It waits up to `graceful_seconds` (default 10) for the tree to exit, then falls back to a kill; `force: true` skips straight to the kill (no config save). The clean path is Windows-only (`OperatingSystem.IsWindows()`-guarded); other platforms kill.
