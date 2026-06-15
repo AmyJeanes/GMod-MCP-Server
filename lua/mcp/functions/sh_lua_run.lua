@@ -1,5 +1,5 @@
 -- MVP tool: execute arbitrary Lua source in the current realm.
--- Gated behind the `lua_eval` capability (mcp_allow_lua_eval).
+-- Gated behind the `unsafe` capability (mcp_allow_unsafe).
 
 MCP:AddFunction({
     id = "lua_run",
@@ -14,7 +14,7 @@ MCP:AddFunction({
         },
         required = { "code" },
     },
-    requires = { "lua_eval" },
+    requires = { "unsafe" },
     handler = function(args, ctx)
         local code = args.code
         if type(code) ~= "string" then

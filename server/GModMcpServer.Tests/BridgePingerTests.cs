@@ -90,6 +90,29 @@ public class BridgePingerTests
     }
 
     [Test]
+    public async Task PingAsync_WhenBootstrapError_DecodesString()
+    {
+        // A terminal launch/level failure (e.g. a missing map) rides back on _ping
+        // so the host can fail fast instead of waiting out the timeout.
+        using var root = new TempBridgeRoot();
+        using var responder = new FakeGmodResponder(root.McpRoot, "server", _ =>
+            new JsonObject
+            {
+                ["ok"] = true,
+                ["enabled"] = true,
+                ["map"] = "gm_construct",
+                ["bootstrap_pending"] = false,
+                ["bootstrap_error"] = "target map 'nope' not found",
+            });
+        using var registry = new FileBridgeRegistry(root.McpRoot, NewSessionId(), NullLoggerFactory.Instance);
+        var pinger = new BridgePinger(registry);
+
+        var result = await pinger.PingAsync(CancellationToken.None);
+
+        Assert.That(result.BootstrapError, Is.EqualTo("target map 'nope' not found"));
+    }
+
+    [Test]
     public async Task PingAsync_WhenOptionalFieldsMissing_ReturnsNullForThem()
     {
         // An older addon build without the bootstrap_pending / map additions
@@ -110,6 +133,7 @@ public class BridgePingerTests
             Assert.That(result.MaxPlayers, Is.Null);
             Assert.That(result.SinglePlayer, Is.Null);
             Assert.That(result.BootstrapPending, Is.Null);
+            Assert.That(result.BootstrapError, Is.Null);
         });
     }
 

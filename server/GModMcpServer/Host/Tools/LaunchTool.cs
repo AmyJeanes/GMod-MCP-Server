@@ -157,7 +157,7 @@ public sealed class LaunchTool : IHostTool
         }
 
         var timeout = TimeSpan.FromSeconds(waitTimeout);
-        var (ready, lastPing, elapsed) = await WaitForReadyAsync(timeout, ct).ConfigureAwait(false);
+        var (ready, lastPing, elapsed) = await _pinger.WaitUntilReadyAsync(timeout, PollInterval, ct).ConfigureAwait(false);
 
         var result = new JsonObject
         {
@@ -175,6 +175,7 @@ public sealed class LaunchTool : IHostTool
                 ["maxplayers"] = lastPing.MaxPlayers,
                 ["singleplayer"] = lastPing.SinglePlayer,
                 ["bootstrap_pending"] = lastPing.BootstrapPending,
+                ["bootstrap_error"] = lastPing.BootstrapError,
             },
         };
         if (!ready)
@@ -185,30 +186,12 @@ public sealed class LaunchTool : IHostTool
         return HostToolHelpers.Ok(result.ToJsonString());
     }
 
-    private async Task<(bool Ready, BridgePingResult Last, TimeSpan Elapsed)> WaitForReadyAsync(
-        TimeSpan timeout, CancellationToken ct)
-    {
-        var sw = Stopwatch.StartNew();
-        var last = default(BridgePingResult);
-        while (sw.Elapsed < timeout)
-        {
-            ct.ThrowIfCancellationRequested();
-            last = await _pinger.PingAsync(ct).ConfigureAwait(false);
-            if (last.Reachable && last.Enabled == true && last.BootstrapPending != true)
-            {
-                sw.Stop();
-                return (true, last, sw.Elapsed);
-            }
-
-            try { await Task.Delay(PollInterval, ct).ConfigureAwait(false); }
-            catch (TaskCanceledException) { break; }
-        }
-        sw.Stop();
-        return (false, last, sw.Elapsed);
-    }
-
     private static string ReadinessHint(BridgePingResult last, TimeSpan timeout)
     {
+        if (last.BootstrapError != null)
+        {
+            return last.BootstrapError;
+        }
         if (!last.Reachable)
         {
             return $"Timed out after {timeout.TotalSeconds:F0}s waiting for the bridge to respond. "

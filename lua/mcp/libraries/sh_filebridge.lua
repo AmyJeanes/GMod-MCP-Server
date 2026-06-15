@@ -88,7 +88,25 @@ local function processOne(filename)
             -- alone isn't a reliable "ready" signal — the .NET host waits on
             -- this flag instead.
             bootstrap_pending = MCP._bootstrap_pending == true,
+            -- Set when a launch/level transition failed terminally (e.g. target
+            -- map missing); lets the host fail fast instead of waiting out the
+            -- timeout. nil when unset, so the field is simply absent from _ping.
+            bootstrap_error = MCP._bootstrap_error,
         })
+        return
+    end
+
+    -- Bridge-internal in-game level change (host_changelevel). Not a manifest
+    -- tool; gated on mcp_enable inside RequestLevelChange. Server realm only —
+    -- the handler is defined in sv_level_change.lua.
+    if req.function_id == "_changelevel" then
+        local result
+        if MCP.RequestLevelChange then
+            result = MCP:RequestLevelChange(req.args)
+        else
+            result = { ok = false, error = "_changelevel is only available on the server realm" }
+        end
+        writeResponse(req.id, result)
         return
     end
 

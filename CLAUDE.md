@@ -38,7 +38,7 @@ The framework always appends `_sv` or `_cl` to the MCP tool name on the .NET sid
 
 Sensitive tools declare `requires = { "<cap-id>" }`. Capabilities are registered with `MCP:AddCapability({ id = "...", default = false })` — the framework auto-derives the convar (`mcp_allow_<id>`) and creates it `FCVAR_PROTECTED | FCVAR_DONTRECORD | FCVAR_REPLICATED | FCVAR_ARCHIVE`. Replicated so server-side toggles propagate to clients; archived so user grants persist across game restarts. Don't reach for the convar directly; let the framework gate.
 
-Built-in capabilities live in `lua/mcp/libraries/sh_capabilities.lua`. Project-specific capabilities declare their own.
+Built-in capabilities live in `lua/mcp/libraries/sh_capabilities.lua` — currently just `unsafe`, which gates both `lua_run` and `console_cmd`. The two are equivalent in power (Lua can `RunConsoleCommand`; the console can `lua_run` arbitrary Lua), so a single gate is honest rather than illusory granularity. Project-specific capabilities declare their own.
 
 ## Tooling
 
@@ -90,7 +90,7 @@ dotnet run    # for local development
 Tests live in `server/GModMcpServer.Tests/` (NUnit 4). Run with `dotnet test server/GModMcpServer.Tests/GModMcpServer.Tests.csproj` from the repo root. Coverage focuses on `MergedManifest.Equals`, `FileBridge` round-trips against a `FakeGmodResponder`, and `ManifestWatcher` change detection. `GameProcessManager` and the host tools (`Launch`/`Close`/`Status`) aren't unit-tested — they wrap the OS process layer and the live file bridge respectively.
 
 Two categories of tool exist on the .NET side:
-- **Host tools** (`server/GModMcpServer/Host/Tools/`) — implemented in-process, available even when GMod isn't running: `host_launch`, `host_close`, `host_status`.
+- **Host tools** (`server/GModMcpServer/Host/Tools/`) — implemented in-process, available even when GMod isn't running: `host_launch`, `host_close`, `host_status`. `host_changelevel` also lives here but needs a running game — it changes the live map and blocks until the new map is ready (the in-game sibling of `host_launch`'s readiness wait).
 - **Bridge tools** — declared by GMod via `MCP:AddFunction`, dispatched through the file IPC. Names always end in `_sv` or `_cl` so realm is visible.
 
 `host_status` issues a live `_ping` round-trip when GMod is detected so the MCP client can distinguish "running but bridge unreachable" from "running but `mcp_enable` is off." See `docs/protocol.md` for the wire format.

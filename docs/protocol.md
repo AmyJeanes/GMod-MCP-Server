@@ -36,16 +36,16 @@ The .NET host merges the two manifest files into a unified tool list; tool names
       "id": "lua_run",
       "description": "Compile and execute Lua source ...",
       "schema": { "type": "object", "properties": { "code": {...} }, "required": ["code"] },
-      "requires": ["lua_eval"],
+      "requires": ["unsafe"],
       "realm": "server"
     }
   ],
   "capabilities": [
     {
-      "id": "lua_eval",
-      "description": "Allows execution of arbitrary Lua source...",
+      "id": "unsafe",
+      "description": "Arbitrary code execution (Lua + console) — effectively full control...",
       "default": false,
-      "convar": "mcp_allow_lua_eval",
+      "convar": "mcp_allow_unsafe",
       "current": false
     }
   ]
@@ -112,9 +112,10 @@ Gating: capture runs only while `mcp_enable` is `1`; the `mcp_capture` convar (`
 
 ## Bridge-internal functions
 
-Function ids prefixed with `_` are intercepted by the bridge before reaching `MCP:Dispatch` — they bypass the `mcp_enable` gate and don't appear in the manifest.
+Function ids prefixed with `_` are intercepted by the bridge before reaching `MCP:Dispatch` and don't appear in the manifest. Most bypass the `mcp_enable` gate (`_ping`); ones that perform an action re-check it themselves (`_changelevel`).
 
-- `_ping` — health check used by `host_status` and `host_launch`'s readiness wait. Bypasses the `mcp_enable` gate. Returns `{ ok = true, enabled = <mcp_enable bool>, realm = "server"|"client", map = <current map>, maxplayers = <int>, singleplayer = <bool>, bootstrap_pending = <bool> }`. `maxplayers`/`singleplayer` let the host report listen-server vs singleplayer — and, because maxplayers is fixed at launch, signal that switching modes needs a relaunch. `bootstrap_pending` is true while a `host_launch` intent is queued or mid-transition. Older addon builds may omit the optional fields; the host decodes them as null.
+- `_ping` — health check used by `host_status` and `host_launch`'s readiness wait. Bypasses the `mcp_enable` gate. Returns `{ ok = true, enabled = <mcp_enable bool>, realm = "server"|"client", map = <current map>, maxplayers = <int>, singleplayer = <bool>, bootstrap_pending = <bool>, bootstrap_error = <string|absent> }`. `maxplayers`/`singleplayer` let the host report listen-server vs singleplayer — and, because maxplayers is fixed at launch, signal that switching modes needs a relaunch. `bootstrap_pending` is true while a `host_launch` intent or a `_changelevel` transition is queued or mid-flight. `bootstrap_error` is set (and `bootstrap_pending` cleared) when a transition fails terminally — e.g. the target map isn't installed — so the host fails fast instead of waiting out its timeout; absent when unset. Older addon builds may omit the optional fields; the host decodes them as null.
+- `_changelevel` — in-game map change driving `host_changelevel` (GMod side in `sv_level_change.lua`). **Server realm only**, and self-gates on `mcp_enable` (returns an error when off). Args `{ map, gamemode?, hard_reset? }`. Validates the map is installed (`maps/<map>.bsp` in mounted content), sets `bootstrap_pending`, writes the `mcp/level_change.json` marker, then issues `changelevel <map>` (or `map <map>` for a full restart / gamemode switch) at end of frame — after the response file is written. Returns `{ ok, map, command }`, or `{ ok = false, error }` if disabled or the map is missing. A map load tears down the server Lua state, so the on-disk marker is what carries `bootstrap_pending` across the teardown until the new map's `InitPostEntity` clears it; the host polls `_ping` for that, exactly like the `host_launch` bootstrap.
 
 ## Capability gating
 
@@ -125,7 +126,7 @@ When a tool's `requires` list contains a capability whose convar is `0`, GMod re
   "id": "...",
   "result": {
     "ok": false,
-    "error": "capability disabled: lua_eval (set mcp_allow_lua_eval 1 to enable)"
+    "error": "capability disabled: unsafe (set mcp_allow_unsafe 1 to enable)"
   }
 }
 ```

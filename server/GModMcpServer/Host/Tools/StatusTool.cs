@@ -62,7 +62,12 @@ public sealed class StatusTool : IHostTool
             bridgeNode["maxplayers"] = ping.MaxPlayers;
             bridgeNode["singleplayer"] = ping.SinglePlayer;
             bridgeNode["bootstrap_pending"] = ping.BootstrapPending;
-            if (!ping.Reachable)
+            bridgeNode["bootstrap_error"] = ping.BootstrapError;
+            if (ping.BootstrapError != null)
+            {
+                bridgeNode["hint"] = ping.BootstrapError;
+            }
+            else if (!ping.Reachable)
             {
                 bridgeNode["hint"] = "GMod is running but the bridge didn't respond — likely still loading, or paused on a menu.";
             }

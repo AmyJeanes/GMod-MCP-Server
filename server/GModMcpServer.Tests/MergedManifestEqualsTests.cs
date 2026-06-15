@@ -102,15 +102,15 @@ public class MergedManifestEqualsTests
 				Id = "lua_run",
 				Description = toolDescription,
 				Schema = schema ?? JsonNode.Parse("""{"type":"object","properties":{"code":{"type":"string"}},"required":["code"]}"""),
-				Requires = requires ?? new List<string> { "lua_eval" },
+				Requires = requires ?? new List<string> { "unsafe" },
 				Realm = "server",
 			});
-		manifest.Capabilities["lua_eval"] = new CapabilityEntry
+		manifest.Capabilities["unsafe"] = new CapabilityEntry
 		{
-			Id = "lua_eval",
+			Id = "unsafe",
 			Description = "Allow Lua eval.",
 			Default = false,
-			ConVar = "mcp_allow_lua_eval",
+			ConVar = "mcp_allow_unsafe",
 			Current = capabilityCurrent,
 		};
 		return manifest;

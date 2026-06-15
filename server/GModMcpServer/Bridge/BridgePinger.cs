@@ -40,6 +40,7 @@ public sealed class BridgePinger
             bool? bootstrapPending = null;
             int? maxPlayers = null;
             bool? singlePlayer = null;
+            string? bootstrapError = null;
             if (resp.Result is JsonObject obj)
             {
                 if (obj.TryGetPropertyValue("enabled", out var enNode)
@@ -77,18 +78,62 @@ public sealed class BridgePinger
                 {
                     singlePlayer = spBool;
                 }
+
+                if (obj.TryGetPropertyValue("bootstrap_error", out var beNode)
+                    && beNode is JsonValue beVal
+                    && beVal.TryGetValue<string>(out var beStr))
+                {
+                    bootstrapError = beStr;
+                }
             }
 
-            return new BridgePingResult(true, sw.Elapsed.TotalMilliseconds, enabled, map, bootstrapPending, maxPlayers, singlePlayer);
+            return new BridgePingResult(true, sw.Elapsed.TotalMilliseconds, enabled, map, bootstrapPending, maxPlayers, singlePlayer, bootstrapError);
         }
         catch (TaskCanceledException)
         {
-            return new BridgePingResult(false, null, null, null, null, null, null);
+            return new BridgePingResult(false, null, null, null, null, null, null, null);
         }
         catch (Exception)
         {
-            return new BridgePingResult(false, null, null, null, null, null, null);
+            return new BridgePingResult(false, null, null, null, null, null, null, null);
         }
+    }
+
+    /// <summary>
+    /// Polls <c>_ping</c> until the bridge is ready — reachable, <c>mcp_enable</c>
+    /// on, and no launch/level transition pending — or <paramref name="timeout"/>
+    /// elapses. Bails early with <c>Ready = false</c> if the addon reports a
+    /// terminal <c>bootstrap_error</c>; that's checked <em>before</em> the ready
+    /// condition because the failure path also clears <c>bootstrap_pending</c>, so
+    /// the naive ready check would otherwise treat a failed transition as success.
+    /// Shared by <c>host_launch</c> and <c>host_changelevel</c>.
+    /// </summary>
+    public async Task<(bool Ready, BridgePingResult Last, TimeSpan Elapsed)> WaitUntilReadyAsync(
+        TimeSpan timeout, TimeSpan pollInterval, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        var last = default(BridgePingResult);
+        while (sw.Elapsed < timeout)
+        {
+            ct.ThrowIfCancellationRequested();
+            last = await PingAsync(ct).ConfigureAwait(false);
+
+            if (last.BootstrapError != null)
+            {
+                sw.Stop();
+                return (false, last, sw.Elapsed);
+            }
+            if (last.Reachable && last.Enabled == true && last.BootstrapPending != true)
+            {
+                sw.Stop();
+                return (true, last, sw.Elapsed);
+            }
+
+            try { await Task.Delay(pollInterval, ct).ConfigureAwait(false); }
+            catch (TaskCanceledException) { break; }
+        }
+        sw.Stop();
+        return (false, last, sw.Elapsed);
     }
 }
 
@@ -99,4 +144,5 @@ public readonly record struct BridgePingResult(
     string? Map,
     bool? BootstrapPending,
     int? MaxPlayers,
-    bool? SinglePlayer);
+    bool? SinglePlayer,
+    string? BootstrapError);

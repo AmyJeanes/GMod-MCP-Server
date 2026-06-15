@@ -66,6 +66,20 @@ local function transition(reason)
         return
     end
 
+    -- Validate before issuing the map command. We're on gm_construct with every
+    -- enabled workshop addon already mounted, so this sees base-game *and*
+    -- workshop maps. A missing map would otherwise fail silently, never fire a
+    -- second InitPostEntity, and leave bootstrap_pending stuck — hanging the host
+    -- until its timeout. Surface the error instead and stay on gm_construct.
+    if not MCP.util.MapExists(targetMap) then
+        MCP._bootstrap_error = string.format(
+            "target map '%s' not found (no maps/%s.bsp); staying on %s",
+            targetMap, targetMap, game.GetMap())
+        MCP._bootstrap_pending = false
+        MsgN("[MCP] launch intent: " .. MCP._bootstrap_error)
+        return
+    end
+
     MsgN(string.format("[MCP] launch intent: %s after %.2fs.",
         reason, RealTime() - startTime))
 

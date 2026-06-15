@@ -23,7 +23,7 @@ The repo is the GMod addon: clone it directly into `garrysmod/addons/`. The .NET
 4. **Have the assistant launch GMod** via the `host_launch` tool, or start GMod yourself. The bridge polls regardless of consent, but tool dispatch requires opting in via convars in the GMod developer console:
    ```
    mcp_enable 1
-   mcp_allow_lua_eval 1
+   mcp_allow_unsafe 1
    ```
    These are `FCVAR_ARCHIVE`, so once set they persist across game restarts.
 5. **Verify**: `mcp__gmod__lua_run_sv` and `mcp__gmod__lua_run_cl` (game-side, dispatched through the file bridge) plus `mcp__gmod__host_launch`, `host_close`, `host_status` (host-side, run by the .NET process) should appear in your assistant's tool list. `host_status` will report `bridge.reachable: true` once GMod is running and responsive.
@@ -78,14 +78,14 @@ Sensitive tools declare a `requires` list. The capability ships with an auto-der
 
 ```lua
 MCP:AddCapability({
-    id = "lua_eval",
-    description = "Allows execution of arbitrary Lua source.",
+    id = "unsafe",
+    description = "Arbitrary code execution (Lua + console) — effectively full control.",
     default = false,
 })
 
 MCP:AddFunction({
     id = "lua_run",
-    requires = { "lua_eval" },
+    requires = { "unsafe" },
     -- ...
 })
 ```

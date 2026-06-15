@@ -64,6 +64,7 @@ internal static class Program
         builder.Services.AddSingleton<IHostTool, LaunchTool>();
         builder.Services.AddSingleton<IHostTool, CloseTool>();
         builder.Services.AddSingleton<IHostTool, StatusTool>();
+        builder.Services.AddSingleton<IHostTool, ChangeLevelTool>();
 
         builder.Services
             .AddMcpServer(options => options.ServerInstructions = ServerInstructionsText)
