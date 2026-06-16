@@ -11,6 +11,7 @@ public sealed class LaunchTool : IHostTool
     private const string BootstrapMap = "gm_construct";
     private const string BootstrapGamemode = "sandbox";
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan FocusWatchInterval = TimeSpan.FromMilliseconds(120);
 
     private readonly GameProcessManager _proc;
     private readonly BridgePinger _pinger;
@@ -52,7 +53,7 @@ public sealed class LaunchTool : IHostTool
         "extra_args":   { "type": "array",   "items": { "type": "string" }, "description": "Extra arguments appended verbatim to the gmod.exe command line." },
         "wait_for_bridge": { "type": "boolean", "description": "Block until the bridge is reachable, mcp_enable is 1, and the bootstrap transition has completed (default: true). Set false for fire-and-forget launches." },
         "wait_timeout_seconds": { "type": "integer", "description": "How long to wait for the bridge to become ready before returning a timeout error (default: 180). Workshop boots can take 30-90s; the user also needs time to type `mcp_enable 1`." },
-        "fix_focus":    { "type": "boolean", "description": "After the bridge is ready, if GMod was launched into the background and its window grabbed the mouse (a GMod/SDL startup-focus bug), give the window a brief real focus cycle to release the cursor. Only fires when actually stuck (gmod isn't the OS foreground window AND it still thinks it's focused), so normal launches are untouched; causes a brief focus blip. Windows-only. Default: true." }
+        "background":   { "type": "boolean", "description": "Controls focus on launch (Windows-only). false (default): GMod comes to the foreground as usual — and if a GMod/SDL startup-focus glitch leaves it stuck in the background with the mouse grabbed, it's focused properly to fix it (you end up in the game). true: keep YOUR current foreground window — GMod grabs the foreground at window creation, so a watcher restores your window whenever it does, keeping you where you are for the whole load while GMod ends up cleanly unfocused (no mouse grab). Use true when launching autonomously while the user is working elsewhere (e.g. a fullscreen RDP session); it needs wait_for_bridge (the watcher runs during the readiness wait)." }
       },
       "required": []
     }
@@ -72,7 +73,7 @@ public sealed class LaunchTool : IHostTool
         var waitForBridge = HostToolHelpers.GetBool(args, "wait_for_bridge", true);
         var waitTimeout = HostToolHelpers.GetInt(args, "wait_timeout_seconds", 180);
         var maxPlayers = HostToolHelpers.GetIntOrNull(args, "maxplayers");
-        var fixFocus = HostToolHelpers.GetBool(args, "fix_focus", true);
+        var background = HostToolHelpers.GetBool(args, "background", false);
 
         if (maxPlayers is int requested && (requested < 1 || requested > 128))
         {
@@ -126,6 +127,15 @@ public sealed class LaunchTool : IHostTool
             argList.Add("+map"); argList.Add(bootMap);
         }
 
+        // Background launch: remember the user's window before we spawn GMod so the focus
+        // watcher can keep it foreground while GMod loads (GMod grabs the foreground at window
+        // creation). Only meaningful when we stay to watch the readiness wait.
+        var userWindow = IntPtr.Zero;
+        if (background && waitForBridge && OperatingSystem.IsWindows())
+        {
+            userWindow = _proc.CaptureForegroundWindow();
+        }
+
         Process p;
         try
         {
@@ -153,13 +163,33 @@ public sealed class LaunchTool : IHostTool
                 ["args"] = string.Join(" ", argList),
                 ["bootstrap"] = bootstrapNote,
                 ["bridge_ready"] = false,
-                ["note"] = "wait_for_bridge=false: returning immediately. Use host_status to check when the bridge is ready.",
+                ["note"] = "wait_for_bridge=false: returning immediately. Use host_status to check when the bridge is ready."
+                    + (background ? " (background ignored: it needs wait_for_bridge to run the focus watcher.)" : ""),
             };
             return HostToolHelpers.Ok(fireAndForget.ToJsonString());
         }
 
         var timeout = TimeSpan.FromSeconds(waitTimeout);
+
+        // Background launch: keep the user's window foreground while GMod loads. A single
+        // restore at GMod's first grab is enough (it doesn't re-grab), but we watch the whole
+        // wait to be safe and to catch a late grab.
+        using var watchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var focusWatcher = userWindow != IntPtr.Zero
+            ? Task.Run(() => WatchForegroundAsync(userWindow, watchCts.Token), watchCts.Token)
+            : null;
+
         var (ready, server, client, elapsed) = await _pinger.WaitUntilReadyAsync(timeout, PollInterval, ct).ConfigureAwait(false);
+
+        var demotes = 0;
+        if (focusWatcher is not null)
+        {
+            watchCts.Cancel();
+            try { demotes = await focusWatcher.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            // Catch a grab that landed between the last watch tick and readiness.
+            if (_proc.DemoteFromForeground(userWindow)) demotes++;
+        }
 
         var result = new JsonObject
         {
@@ -186,17 +216,32 @@ public sealed class LaunchTool : IHostTool
                 ["has_focus"] = client.HasFocus,
             },
         };
+        if (background)
+        {
+            result["background_focus"] = new JsonObject
+            {
+                ["requested"] = true,
+                ["captured_window"] = userWindow != IntPtr.Zero,
+                ["demotes"] = demotes,
+                ["note"] = userWindow == IntPtr.Zero
+                    ? "No window captured (off-Windows or no foreground); GMod was not kept off the foreground."
+                    : demotes > 0
+                        ? "Kept your window foreground; restored it past GMod's focus grab(s)."
+                        : "GMod never took the foreground; nothing to restore.",
+            };
+        }
         if (!ready)
         {
             result["error"] = ReadinessHint(server, client, timeout);
             return HostToolHelpers.Err(result.ToJsonString());
         }
 
-        // Background-launch stuck-focus workaround (Windows-only; opt out via fix_focus).
-        // Only acts when actually stuck, so a normal launch gets no focus blip.
-        if (fixFocus && OperatingSystem.IsWindows())
+        // Reconcile focus to the launch intent (Windows-only; a no-op unless GMod's startup
+        // glitch left it stuck in the background). background=false heals toward GMod foreground,
+        // background=true frees the mouse and keeps the user's window.
+        if (OperatingSystem.IsWindows())
         {
-            result["focus_reconcile"] = await ReconcileFocusAsync(client, ct).ConfigureAwait(false);
+            result["focus_reconcile"] = await ReconcileFocusAsync(client, background, ct).ConfigureAwait(false);
         }
 
         return HostToolHelpers.Ok(result.ToJsonString());
@@ -231,15 +276,18 @@ public sealed class LaunchTool : IHostTool
         return $"Timed out after {timeout.TotalSeconds:F0}s waiting for the bridge to become ready.";
     }
 
-    // Detects and clears GMod's stuck mouse-grab after a background launch. The bug:
-    // GMod missed the OS focus-lost during the startup race, so it thinks it's focused
-    // and grabs the mouse while in the background. Detection needs BOTH signals — the
-    // OS view (gmod isn't foreground) AND the game's belief (client has_focus == true);
-    // together they separate "stuck while background" (fix) from "really focused"
-    // (leave alone). The fix is a real focus flicker (GameProcessManager.FlickerFocus),
-    // applied with an escalating settle and verified via has_focus so we use the
-    // shortest pause that actually heals. Best-effort: never fails the launch.
-    private async Task<JsonObject> ReconcileFocusAsync(BridgePingResult client, CancellationToken ct)
+    // Reconciles GMod's focus to the launch intent after readiness. The stuck-mouse signature
+    // is GMod NOT being the OS foreground while it still believes it's focused (client
+    // has_focus == true) — the SDL startup-focus glitch, where GMod grabs the mouse from the
+    // background. A clean background (has_focus == false, e.g. the user deliberately alt-tabbed
+    // away) is not the glitch and is left alone. When the glitch is detected:
+    //   * background == false (foreground launch): bring GMod legitimately to the foreground,
+    //     so the mouse grab becomes correct (the game is the active window).
+    //   * background == true: flicker focus to free the mouse and restore the user's window,
+    //     leaving GMod unfocused (the watcher usually prevents this state arising at all).
+    // Both heals go through GameProcessManager's forced-foreground path, so they win against the
+    // foreground lock even while the user is actively clicking. Best-effort: never fails launch.
+    private async Task<JsonObject> ReconcileFocusAsync(BridgePingResult client, bool background, CancellationToken ct)
     {
         var foreground = _proc.IsForeground();
         var stuck = !foreground && client.HasFocus == true;
@@ -251,35 +299,72 @@ public sealed class LaunchTool : IHostTool
         };
         if (!stuck)
         {
+            node["action"] = "none";
             node["resolved"] = false;
-            node["flickers"] = 0;
             node["note"] = foreground
                 ? "GMod is the foreground window; nothing to reconcile."
-                : "Client reports it is not focused; no stuck mouse-grab to fix.";
+                : "GMod is cleanly unfocused; no stuck mouse-grab to fix.";
             return node;
         }
 
-        // Escalating settle: try "instant" first, grow only if has_focus didn't heal.
+        if (!background)
+        {
+            // Foreground launch: heal by bringing GMod properly to the front.
+            node["action"] = "focus_game";
+            var attempts = 0;
+            var resolved = false;
+            for (var i = 0; i < 4 && !resolved; i++)
+            {
+                _proc.FocusGame();
+                attempts++;
+                var check = await _pinger.PingAsync("client", TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+                resolved = _proc.IsForeground() && check.HasFocus == true;
+            }
+            node["attempts"] = attempts;
+            node["resolved"] = resolved;
+            node["note"] = resolved
+                ? "Brought GMod to the foreground; the mouse grab is now legitimate."
+                : "Could not bring GMod to the foreground within budget.";
+            return node;
+        }
+
+        // Background launch: free the mouse and keep the user's window. Escalating settle —
+        // try "instant" first, grow only if has_focus didn't heal.
+        node["action"] = "flicker";
         int[] settles = { 0, 50, 150, 400 };
         var flickers = 0;
-        var resolved = false;
+        var flickerResolved = false;
         foreach (var settle in settles)
         {
             if (_proc.IsForeground()) break; // user clicked into the game — leave it
             _proc.FlickerFocus(settle);
             flickers++;
             var check = await _pinger.PingAsync("client", TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
-            if (check.HasFocus == false) { resolved = true; break; }
+            if (check.HasFocus == false) { flickerResolved = true; break; }
         }
-
-        node["resolved"] = resolved;
         node["flickers"] = flickers;
-        if (!resolved)
+        node["resolved"] = flickerResolved;
+        if (!flickerResolved)
         {
-            node["note"] = "Flicker did not heal the stuck focus within the settle budget; "
+            node["note"] = "Flicker did not free the mouse within the settle budget; "
                 + "the cursor may stay grabbed until you alt-tab into GMod.";
         }
         return node;
+    }
+
+    // Background-launch focus watcher: while GMod loads, restore the user's window whenever
+    // GMod grabs the foreground. Returns how many restores it had to do. Runs until the
+    // readiness wait completes (its token is cancelled then).
+    private async Task<int> WatchForegroundAsync(IntPtr userWindow, CancellationToken token)
+    {
+        var demotes = 0;
+        while (!token.IsCancellationRequested)
+        {
+            if (_proc.DemoteFromForeground(userWindow)) demotes++;
+            try { await Task.Delay(FocusWatchInterval, token).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
+        }
+        return demotes;
     }
 
     private string IntentPath => Path.Combine(_mcpRoot, "launch_intent.json");

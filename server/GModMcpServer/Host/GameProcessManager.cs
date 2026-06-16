@@ -229,7 +229,10 @@ public sealed class GameProcessManager
     /// optionally settle for <paramref name="settleMs"/> (so the engine processes the
     /// focus-in on its frame loop), then restore the previous foreground window. Real
     /// OS focus events heal SDL cleanly, where synthetic deactivate messages corrupt
-    /// the next refocus. Returns false off-Windows or when no game window is found.
+    /// the next refocus. Both transitions go through <see cref="SetForegroundForced"/> so the
+    /// heal still works when the user is actively clicking another window (the foreground lock
+    /// otherwise blocks the plain call and the stuck mouse never releases). Returns false
+    /// off-Windows or when no game window is found.
     /// </summary>
     public bool FlickerFocus(int settleMs)
         => OperatingSystem.IsWindows() && FlickerFocusCore(settleMs);
@@ -241,7 +244,7 @@ public sealed class GameProcessManager
         if (target == IntPtr.Zero) return false;
 
         var prev = Native.GetForegroundWindow();
-        Native.SetForegroundWindow(target);
+        SetForegroundForced(target);
 
         // Hand focus back only once the OS confirms gmod is foreground, rather than a
         // blind wait. Bounded so a blocked SetForegroundWindow can't hang us.
@@ -253,8 +256,78 @@ public sealed class GameProcessManager
 
         if (settleMs > 0) Thread.Sleep(settleMs);
 
-        if (prev != IntPtr.Zero) Native.SetForegroundWindow(prev);
+        if (prev != IntPtr.Zero) SetForegroundForced(prev);
         return true;
+    }
+
+    /// <summary>
+    /// The current OS foreground window handle, captured before a background launch so the
+    /// launcher can restore it whenever GMod tries to steal focus. <see cref="IntPtr.Zero"/>
+    /// off-Windows or when there is no foreground window.
+    /// </summary>
+    public IntPtr CaptureForegroundWindow()
+        => OperatingSystem.IsWindows() ? Native.GetForegroundWindow() : IntPtr.Zero;
+
+    /// <summary>
+    /// If GMod's window is currently the OS foreground, restore <paramref name="userWindow"/>
+    /// to the foreground instead — the "keep my window" action of a background launch. A real
+    /// <c>SetForegroundWindow</c> hands GMod a clean focus-loss, so it doesn't grab the mouse,
+    /// and (per testing) GMod doesn't re-grab afterwards. No-op returning false when GMod isn't
+    /// the foreground, <paramref name="userWindow"/> is invalid, off-Windows, or no game window
+    /// exists yet.
+    /// </summary>
+    public bool DemoteFromForeground(IntPtr userWindow)
+        => OperatingSystem.IsWindows() && DemoteFromForegroundCore(userWindow);
+
+    /// <summary>
+    /// Bring GMod's window legitimately to the OS foreground and leave it there — the heal for
+    /// a foreground (non-background) launch whose startup-focus glitch left GMod stuck in the
+    /// background with the mouse grabbed. Uses the forced set, so it wins against the foreground
+    /// lock. Returns false off-Windows or when no game window is found.
+    /// </summary>
+    public bool FocusGame()
+        => OperatingSystem.IsWindows() && FocusGameCore();
+
+    [SupportedOSPlatform("windows")]
+    private static bool FocusGameCore()
+    {
+        var target = FindGameWindow();
+        if (target == IntPtr.Zero) return false;
+        SetForegroundForced(target);
+        return true;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool DemoteFromForegroundCore(IntPtr userWindow)
+    {
+        if (userWindow == IntPtr.Zero) return false;
+        var target = FindGameWindow();
+        if (target == IntPtr.Zero) return false;
+        if (Native.GetForegroundWindow() != target) return false;
+        // Only act when GMod actually holds the foreground; restore the user's window. The
+        // forced set is essential here — a plain call is blocked by the foreground lock during
+        // GMod's startup grab (one forced restore sticks where dozens of plain calls didn't).
+        SetForegroundForced(userWindow);
+        return true;
+    }
+
+    // Force `target` to the foreground, beating Windows' foreground lock by briefly attaching
+    // our input queue to the *current* foreground window's thread for the call. A plain
+    // SetForegroundWindow from this background host is silently dropped whenever another process
+    // holds/asserts the foreground — GMod grabbing it at startup, OR a window the user is
+    // actively clicking — which is exactly when both the background watcher and the stuck-focus
+    // flicker need it. With the attach the call takes effect (it may even still report false).
+    [SupportedOSPlatform("windows")]
+    private static void SetForegroundForced(IntPtr target)
+    {
+        var fg = Native.GetForegroundWindow();
+        var fgThread = fg == IntPtr.Zero ? 0u : Native.GetWindowThreadProcessId(fg, out _);
+        var myThread = Native.GetCurrentThreadId();
+        var attached = fgThread != 0 && myThread != fgThread
+            && Native.AttachThreadInput(myThread, fgThread, true);
+        Native.SetForegroundWindow(target);
+        Native.BringWindowToTop(target);
+        if (attached) Native.AttachThreadInput(myThread, fgThread, false);
     }
 
     [SupportedOSPlatform("windows")]
@@ -285,6 +358,15 @@ public sealed class GameProcessManager
 
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool BringWindowToTop(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+        [DllImport("kernel32.dll")]
+        public static extern uint GetCurrentThreadId();
     }
 
     private static Process? FindRunning()
