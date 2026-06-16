@@ -164,13 +164,12 @@ public sealed class GameProcessManager
         }
     }
 
-    // Posts the X-button close signal (WM_SYSCOMMAND/SC_CLOSE) to GMod's main game
-    // window. The launcher chain spawns several gmod.exe processes (CEF/Steam
-    // helpers); only the one owning the visible "Garry's Mod" window responds, so
-    // we enumerate top-level windows across all of them. Returns true if the window
-    // was found and the message posted.
+    // Finds the visible "Garry's Mod" top-level window. The launcher chain spawns
+    // several gmod.exe processes (CEF/Steam helpers); only the one owning the visible
+    // game window matches, so we enumerate top-level windows across all of them.
+    // Returns IntPtr.Zero if not found.
     [SupportedOSPlatform("windows")]
-    private static bool TryRequestWindowClose()
+    private static IntPtr FindGameWindow()
     {
         var pids = new HashSet<int>();
         foreach (var p in Process.GetProcessesByName(ProcessName))
@@ -178,7 +177,7 @@ public sealed class GameProcessManager
             pids.Add(p.Id);
             p.Dispose();
         }
-        if (pids.Count == 0) return false;
+        if (pids.Count == 0) return IntPtr.Zero;
 
         var target = IntPtr.Zero;
         Native.EnumWindows((hWnd, _) =>
@@ -194,9 +193,68 @@ public sealed class GameProcessManager
             }
             return true;
         }, IntPtr.Zero);
+        return target;
+    }
 
+    // Posts the X-button close signal (WM_SYSCOMMAND/SC_CLOSE) to GMod's main game
+    // window — the clean-shutdown trigger. Returns true if the window was found and
+    // the message posted.
+    [SupportedOSPlatform("windows")]
+    private static bool TryRequestWindowClose()
+    {
+        var target = FindGameWindow();
         if (target == IntPtr.Zero) return false;
         return Native.PostMessage(target, Native.WM_SYSCOMMAND, Native.SC_CLOSE, IntPtr.Zero);
+    }
+
+    /// <summary>
+    /// Whether GMod's game window is the current OS foreground window. Paired with the
+    /// client realm's <c>system.HasFocus()</c> to detect the background-launch
+    /// stuck-focus bug (engine thinks it's focused while the OS gave focus elsewhere).
+    /// False off-Windows or when no game window is found.
+    /// </summary>
+    public bool IsForeground()
+        => OperatingSystem.IsWindows() && IsForegroundCore();
+
+    [SupportedOSPlatform("windows")]
+    private static bool IsForegroundCore()
+    {
+        var target = FindGameWindow();
+        return target != IntPtr.Zero && Native.GetForegroundWindow() == target;
+    }
+
+    /// <summary>
+    /// Heals GMod's stuck-focus state after a background launch by giving its window a
+    /// brief, real focus cycle: focus it, wait until the OS confirms it's foreground,
+    /// optionally settle for <paramref name="settleMs"/> (so the engine processes the
+    /// focus-in on its frame loop), then restore the previous foreground window. Real
+    /// OS focus events heal SDL cleanly, where synthetic deactivate messages corrupt
+    /// the next refocus. Returns false off-Windows or when no game window is found.
+    /// </summary>
+    public bool FlickerFocus(int settleMs)
+        => OperatingSystem.IsWindows() && FlickerFocusCore(settleMs);
+
+    [SupportedOSPlatform("windows")]
+    private static bool FlickerFocusCore(int settleMs)
+    {
+        var target = FindGameWindow();
+        if (target == IntPtr.Zero) return false;
+
+        var prev = Native.GetForegroundWindow();
+        Native.SetForegroundWindow(target);
+
+        // Hand focus back only once the OS confirms gmod is foreground, rather than a
+        // blind wait. Bounded so a blocked SetForegroundWindow can't hang us.
+        var sw = Stopwatch.StartNew();
+        while (Native.GetForegroundWindow() != target && sw.ElapsedMilliseconds < 1000)
+        {
+            Thread.Sleep(10);
+        }
+
+        if (settleMs > 0) Thread.Sleep(settleMs);
+
+        if (prev != IntPtr.Zero) Native.SetForegroundWindow(prev);
+        return true;
     }
 
     [SupportedOSPlatform("windows")]
@@ -221,6 +279,12 @@ public sealed class GameProcessManager
 
         [DllImport("user32.dll")]
         public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
     }
 
     private static Process? FindRunning()

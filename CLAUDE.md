@@ -34,6 +34,10 @@ A `sh_lua_run.lua` is included on both server and client, so `MCP:AddFunction` r
 
 The framework always appends `_sv` or `_cl` to the MCP tool name on the .NET side, so realm is always visible in the tool list. Don't include `_sv`/`_cl` in your `id` field.
 
+### Client bridge runs only for the listen-server host
+
+The client-realm bridge serves the listen/SP **host** — the machine whose `data/mcp/` the .NET host shares. `IsListenServerHost()` needs a valid `LocalPlayer()` (not available at autorun), so the client bridge starts for everyone and a non-host client (a remote player on a listen server) stops its own bridge once `LocalPlayer()` becomes valid (`clientHostGate` in `sh_filebridge.lua`). Single-player is always the host. Consequence: dual-realm readiness (and the focus fix below) assume the local game is a listen/SP host — always true for a `host_launch`-started game.
+
 ## Capabilities
 
 Sensitive tools declare `requires = { "<cap-id>" }`. Capabilities are registered with `MCP:AddCapability({ id = "...", default = false })` — the framework auto-derives the convar (`mcp_allow_<id>`) and creates it `FCVAR_PROTECTED | FCVAR_DONTRECORD | FCVAR_REPLICATED | FCVAR_ARCHIVE`. Replicated so server-side toggles propagate to clients; archived so user grants persist across game restarts. Don't reach for the convar directly; let the framework gate.
@@ -87,6 +91,8 @@ dotnet build
 dotnet run    # for local development
 ```
 
+**Building requires no MCP host holding these binaries open.** A running host — `dotnet run`, or the GMod MCP server registered in *any* Claude Code / MCP Inspector session pointed at this build — keeps `bin/.../GModMcpServer.dll` locked, so `dotnet build` / `dotnet test` fails with a file-in-use error. Disable or stop the MCP server in **every** active session (and anywhere else it's running) before building, then re-enable it after.
+
 Tests live in `server/GModMcpServer.Tests/` (NUnit 4). Run with `dotnet test server/GModMcpServer.Tests/GModMcpServer.Tests.csproj` from the repo root. Coverage focuses on `MergedManifest.Equals`, `FileBridge` round-trips against a `FakeGmodResponder`, and `ManifestWatcher` change detection. `GameProcessManager` and the host tools (`Launch`/`Close`/`Status`) aren't unit-tested — they wrap the OS process layer and the live file bridge respectively.
 
 Two categories of tool exist on the .NET side:
@@ -112,3 +118,9 @@ Multiple .NET MCP hosts can share the same GMod data dir (e.g. Claude Code + MCP
 `GameProcessManager` finds GMod via `Process.GetProcessesByName("gmod")` rather than holding the handle returned by `Process.Start`. The launcher chain re-execs itself within seconds on Windows, so the original handle goes stale fast — but only one `gmod.exe` is ever running at a time (Steam blocks duplicates), so a name lookup is both reliable and survives .NET host restarts. `_lastArgs` is in-memory state — populated only when *this* .NET process called Launch — and is informational.
 
 `host_close` defaults to a **clean** shutdown so GMod saves its config (capability grants / `mcp_enable` → `cfg/server.vdf`, written only on a real window-close). Lua can't quit (the engine blocklists `quit` on every Lua path: `game.ConsoleCommand`, `RunConsoleCommand`, `Player:ConCommand`) and a raw `WM_CLOSE` is ignored, so it posts the X-button signal (`WM_SYSCOMMAND`/`SC_CLOSE`) to the visible "Garry's Mod" window — found by enumerating top-level windows across all gmod PIDs, since the launcher spawns several (CEF/Steam helpers) and `MainWindowHandle` is unreliable. It waits up to `graceful_seconds` (default 10) for the tree to exit, then falls back to a kill; `force: true` skips straight to the kill (no config save). The clean path is Windows-only (`OperatingSystem.IsWindows()`-guarded); other platforms kill.
+
+### Background-launch mouse-grab (`host_launch` `fix_focus`)
+
+GMod/SDL engine bug: when `host_launch` starts the game in the background and the user clicks away during the startup race, GMod misses the OS focus-lost event and its cached focus flag stays stuck "focused" — so it grabs the mouse (relative-mouse recenter) while backgrounded, unreleasable remotely. After the bridge is ready, `host_launch` detects this from **two signals** — the OS view (`GameProcessManager.IsForeground()` false) AND the game's belief (the client realm's `_ping` `has_focus = true`). Both are required, so a *correctly*-unfocused background launch isn't touched. It fixes it with a brief **real focus flicker** (`GameProcessManager.FlickerFocus`): `SetForegroundWindow(gmod)` → wait until the OS confirms foreground → tiny settle → restore the previous foreground window. Real OS focus events heal SDL cleanly; **synthetic deactivate messages (`WM_KILLFOCUS`/`WM_ACTIVATE`) were tried and rejected** — they free the mouse but corrupt the next real refocus (mouse-look dead, ~20 FPS, until a second alt-tab). The flicker costs a brief focus blip, only fires when actually stuck, is Windows-only, default-on, and opt-out via `fix_focus: false`; the settle escalates from 0 and is verified via `has_focus`, so it uses the shortest pause that heals.
+
+`host_launch` and `host_changelevel` wait for **both** realms to report ready before returning (`BridgePinger.WaitUntilReadyAsync` polls server + client each tick, fail-fast on either realm's `bootstrap_error`). The client realm only needs to be reachable with `mcp_enable` on (bootstrap state is server-side) and is where `has_focus` comes from.

@@ -134,6 +134,7 @@ public class BridgePingerTests
             Assert.That(result.SinglePlayer, Is.Null);
             Assert.That(result.BootstrapPending, Is.Null);
             Assert.That(result.BootstrapError, Is.Null);
+            Assert.That(result.HasFocus, Is.Null);
         });
     }
 
@@ -153,6 +154,61 @@ public class BridgePingerTests
             Assert.That(result.Enabled, Is.Null);
             Assert.That(result.Map, Is.Null);
             Assert.That(result.BootstrapPending, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task PingAsync_DecodesHasFocus_True()
+    {
+        using var root = new TempBridgeRoot();
+        using var responder = new FakeGmodResponder(root.McpRoot, "server", _ =>
+            new JsonObject { ["ok"] = true, ["has_focus"] = true });
+        using var registry = new FileBridgeRegistry(root.McpRoot, NewSessionId(), NullLoggerFactory.Instance);
+        var pinger = new BridgePinger(registry);
+
+        var result = await pinger.PingAsync(CancellationToken.None);
+
+        Assert.That(result.HasFocus, Is.True);
+    }
+
+    [Test]
+    public async Task PingAsync_DecodesHasFocus_False()
+    {
+        // Regression guard: a genuine false must survive as false, not collapse to
+        // null. The Lua side must not use the `and`/`or` idiom that drops false.
+        using var root = new TempBridgeRoot();
+        using var responder = new FakeGmodResponder(root.McpRoot, "server", _ =>
+            new JsonObject { ["ok"] = true, ["has_focus"] = false });
+        using var registry = new FileBridgeRegistry(root.McpRoot, NewSessionId(), NullLoggerFactory.Instance);
+        var pinger = new BridgePinger(registry);
+
+        var result = await pinger.PingAsync(CancellationToken.None);
+
+        Assert.That(result.HasFocus, Is.False);
+    }
+
+    [Test]
+    public async Task PingAsync_ClientRealm_RoutesToClientResponder()
+    {
+        // Only a CLIENT responder exists. The realm-targeted ping must reach it, and
+        // the default (server) ping must NOT — proving the realm parameter routes.
+        using var root = new TempBridgeRoot();
+        using var clientResponder = new FakeGmodResponder(root.McpRoot, "client", req =>
+        {
+            Assert.That(req.FunctionId, Is.EqualTo("_ping"));
+            return new JsonObject { ["ok"] = true, ["enabled"] = true, ["realm"] = "client", ["has_focus"] = true };
+        });
+        using var registry = new FileBridgeRegistry(root.McpRoot, NewSessionId(), NullLoggerFactory.Instance);
+        var pinger = new BridgePinger(registry);
+
+        var client = await pinger.PingAsync("client", TimeSpan.FromSeconds(2), CancellationToken.None);
+        var server = await pinger.PingAsync(TimeSpan.FromMilliseconds(250), CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(client.Reachable, Is.True);
+            Assert.That(client.HasFocus, Is.True);
+            Assert.That(server.Reachable, Is.False, "the default ping targets the server realm, which has no responder here");
         });
     }
 

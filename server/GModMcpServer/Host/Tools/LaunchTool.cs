@@ -51,7 +51,8 @@ public sealed class LaunchTool : IHostTool
         "skip_bootstrap": { "type": "boolean", "description": "Skip the two-stage bootstrap and pass +map directly. Faster but breaks workshop content (default: false)." },
         "extra_args":   { "type": "array",   "items": { "type": "string" }, "description": "Extra arguments appended verbatim to the gmod.exe command line." },
         "wait_for_bridge": { "type": "boolean", "description": "Block until the bridge is reachable, mcp_enable is 1, and the bootstrap transition has completed (default: true). Set false for fire-and-forget launches." },
-        "wait_timeout_seconds": { "type": "integer", "description": "How long to wait for the bridge to become ready before returning a timeout error (default: 180). Workshop boots can take 30-90s; the user also needs time to type `mcp_enable 1`." }
+        "wait_timeout_seconds": { "type": "integer", "description": "How long to wait for the bridge to become ready before returning a timeout error (default: 180). Workshop boots can take 30-90s; the user also needs time to type `mcp_enable 1`." },
+        "fix_focus":    { "type": "boolean", "description": "After the bridge is ready, if GMod was launched into the background and its window grabbed the mouse (a GMod/SDL startup-focus bug), give the window a brief real focus cycle to release the cursor. Only fires when actually stuck (gmod isn't the OS foreground window AND it still thinks it's focused), so normal launches are untouched; causes a brief focus blip. Windows-only. Default: true." }
       },
       "required": []
     }
@@ -71,6 +72,7 @@ public sealed class LaunchTool : IHostTool
         var waitForBridge = HostToolHelpers.GetBool(args, "wait_for_bridge", true);
         var waitTimeout = HostToolHelpers.GetInt(args, "wait_timeout_seconds", 180);
         var maxPlayers = HostToolHelpers.GetIntOrNull(args, "maxplayers");
+        var fixFocus = HostToolHelpers.GetBool(args, "fix_focus", true);
 
         if (maxPlayers is int requested && (requested < 1 || requested > 128))
         {
@@ -157,7 +159,7 @@ public sealed class LaunchTool : IHostTool
         }
 
         var timeout = TimeSpan.FromSeconds(waitTimeout);
-        var (ready, lastPing, elapsed) = await _pinger.WaitUntilReadyAsync(timeout, PollInterval, ct).ConfigureAwait(false);
+        var (ready, server, client, elapsed) = await _pinger.WaitUntilReadyAsync(timeout, PollInterval, ct).ConfigureAwait(false);
 
         var result = new JsonObject
         {
@@ -169,45 +171,115 @@ public sealed class LaunchTool : IHostTool
             ["wait_seconds"] = Math.Round(elapsed.TotalSeconds, 2),
             ["last_ping"] = new JsonObject
             {
-                ["reachable"] = lastPing.Reachable,
-                ["enabled"] = lastPing.Enabled,
-                ["map"] = lastPing.Map,
-                ["maxplayers"] = lastPing.MaxPlayers,
-                ["singleplayer"] = lastPing.SinglePlayer,
-                ["bootstrap_pending"] = lastPing.BootstrapPending,
-                ["bootstrap_error"] = lastPing.BootstrapError,
+                ["reachable"] = server.Reachable,
+                ["enabled"] = server.Enabled,
+                ["map"] = server.Map,
+                ["maxplayers"] = server.MaxPlayers,
+                ["singleplayer"] = server.SinglePlayer,
+                ["bootstrap_pending"] = server.BootstrapPending,
+                ["bootstrap_error"] = server.BootstrapError,
+            },
+            ["client_ping"] = new JsonObject
+            {
+                ["reachable"] = client.Reachable,
+                ["enabled"] = client.Enabled,
+                ["has_focus"] = client.HasFocus,
             },
         };
         if (!ready)
         {
-            result["error"] = ReadinessHint(lastPing, timeout);
+            result["error"] = ReadinessHint(server, client, timeout);
             return HostToolHelpers.Err(result.ToJsonString());
         }
+
+        // Background-launch stuck-focus workaround (Windows-only; opt out via fix_focus).
+        // Only acts when actually stuck, so a normal launch gets no focus blip.
+        if (fixFocus && OperatingSystem.IsWindows())
+        {
+            result["focus_reconcile"] = await ReconcileFocusAsync(client, ct).ConfigureAwait(false);
+        }
+
         return HostToolHelpers.Ok(result.ToJsonString());
     }
 
-    private static string ReadinessHint(BridgePingResult last, TimeSpan timeout)
+    private static string ReadinessHint(BridgePingResult server, BridgePingResult client, TimeSpan timeout)
     {
-        if (last.BootstrapError != null)
+        if (server.BootstrapError != null)
         {
-            return last.BootstrapError;
+            return server.BootstrapError;
         }
-        if (!last.Reachable)
+        if (!server.Reachable)
         {
             return $"Timed out after {timeout.TotalSeconds:F0}s waiting for the bridge to respond. "
                 + "GMod may still be loading, may have crashed, or `mcp_enable` was never set.";
         }
-        if (last.BootstrapPending == true)
+        if (server.BootstrapPending == true)
         {
             return $"Timed out after {timeout.TotalSeconds:F0}s; bridge reachable but the bootstrap transition "
                 + "didn't complete. Workshop mount may have stalled — check the GMod console for errors.";
         }
-        if (last.Enabled == false)
+        if (server.Enabled == false)
         {
             return $"Timed out after {timeout.TotalSeconds:F0}s; bridge reachable but mcp_enable is still 0. "
                 + "Run `mcp_enable 1` in the GMod developer console to allow tool dispatch.";
         }
+        if (!client.Reachable || client.Enabled != true)
+        {
+            return $"Timed out after {timeout.TotalSeconds:F0}s; the server realm is ready but the client realm "
+                + "didn't become ready (its bridge may still be initialising).";
+        }
         return $"Timed out after {timeout.TotalSeconds:F0}s waiting for the bridge to become ready.";
+    }
+
+    // Detects and clears GMod's stuck mouse-grab after a background launch. The bug:
+    // GMod missed the OS focus-lost during the startup race, so it thinks it's focused
+    // and grabs the mouse while in the background. Detection needs BOTH signals — the
+    // OS view (gmod isn't foreground) AND the game's belief (client has_focus == true);
+    // together they separate "stuck while background" (fix) from "really focused"
+    // (leave alone). The fix is a real focus flicker (GameProcessManager.FlickerFocus),
+    // applied with an escalating settle and verified via has_focus so we use the
+    // shortest pause that actually heals. Best-effort: never fails the launch.
+    private async Task<JsonObject> ReconcileFocusAsync(BridgePingResult client, CancellationToken ct)
+    {
+        var foreground = _proc.IsForeground();
+        var stuck = !foreground && client.HasFocus == true;
+        var node = new JsonObject
+        {
+            ["attempted"] = true,
+            ["foreground_at_check"] = foreground,
+            ["detected_stuck"] = stuck,
+        };
+        if (!stuck)
+        {
+            node["resolved"] = false;
+            node["flickers"] = 0;
+            node["note"] = foreground
+                ? "GMod is the foreground window; nothing to reconcile."
+                : "Client reports it is not focused; no stuck mouse-grab to fix.";
+            return node;
+        }
+
+        // Escalating settle: try "instant" first, grow only if has_focus didn't heal.
+        int[] settles = { 0, 50, 150, 400 };
+        var flickers = 0;
+        var resolved = false;
+        foreach (var settle in settles)
+        {
+            if (_proc.IsForeground()) break; // user clicked into the game — leave it
+            _proc.FlickerFocus(settle);
+            flickers++;
+            var check = await _pinger.PingAsync("client", TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+            if (check.HasFocus == false) { resolved = true; break; }
+        }
+
+        node["resolved"] = resolved;
+        node["flickers"] = flickers;
+        if (!resolved)
+        {
+            node["note"] = "Flicker did not heal the stuck focus within the settle budget; "
+                + "the cursor may stay grabbed until you alt-tab into GMod.";
+        }
+        return node;
     }
 
     private string IntentPath => Path.Combine(_mcpRoot, "launch_intent.json");

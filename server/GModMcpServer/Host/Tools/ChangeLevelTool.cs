@@ -127,21 +127,26 @@ public sealed class ChangeLevelTool : IHostTool
         }
 
         var timeout = TimeSpan.FromSeconds(waitTimeout);
-        var (ready, last, elapsed) = await _pinger.WaitUntilReadyAsync(timeout, PollInterval, ct).ConfigureAwait(false);
+        var (ready, server, client, elapsed) = await _pinger.WaitUntilReadyAsync(timeout, PollInterval, ct).ConfigureAwait(false);
 
         var result = new JsonObject
         {
             ["ok"] = ready,
-            ["map"] = last.Map ?? map,
+            ["map"] = server.Map ?? map,
             ["bridge_ready"] = ready,
             ["wait_seconds"] = Math.Round(elapsed.TotalSeconds, 2),
             ["last_ping"] = new JsonObject
             {
-                ["reachable"] = last.Reachable,
-                ["enabled"] = last.Enabled,
-                ["map"] = last.Map,
-                ["bootstrap_pending"] = last.BootstrapPending,
-                ["bootstrap_error"] = last.BootstrapError,
+                ["reachable"] = server.Reachable,
+                ["enabled"] = server.Enabled,
+                ["map"] = server.Map,
+                ["bootstrap_pending"] = server.BootstrapPending,
+                ["bootstrap_error"] = server.BootstrapError,
+            },
+            ["client_ping"] = new JsonObject
+            {
+                ["reachable"] = client.Reachable,
+                ["enabled"] = client.Enabled,
             },
         };
 
@@ -150,7 +155,7 @@ public sealed class ChangeLevelTool : IHostTool
             // Best-effort: clear the marker so a stuck transition doesn't poison
             // the next boot's eager check (the GMod-side fallback also self-clears).
             TryDeleteMarker();
-            result["error"] = last.BootstrapError
+            result["error"] = server.BootstrapError
                 ?? $"Timed out after {timeout.TotalSeconds:F0}s waiting for '{map}' to load.";
             return HostToolHelpers.Err(result.ToJsonString());
         }

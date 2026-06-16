@@ -72,7 +72,7 @@ local function processOne(filename)
     -- mcp_enable is 0 — the host's status tool uses this to distinguish
     -- "running but not consented" from "running but unreachable".
     if req.function_id == "_ping" then
-        writeResponse(req.id, {
+        local resp = {
             ok = true,
             enabled = GetConVar("mcp_enable"):GetBool(),
             realm = MCP.util.RealmName(),
@@ -92,7 +92,15 @@ local function processOne(filename)
             -- map missing); lets the host fail fast instead of waiting out the
             -- timeout. nil when unset, so the field is simply absent from _ping.
             bootstrap_error = MCP._bootstrap_error,
-        })
+        }
+        -- Client realm only: the host pairs this with its own GetForegroundWindow
+        -- check to detect (and flicker-fix) GMod's stuck mouse-grab after a
+        -- background launch. Explicit assignment, not `and`/`or`, so a genuine
+        -- false survives instead of collapsing to nil/absent.
+        if CLIENT then
+            resp.has_focus = system.HasFocus()
+        end
+        writeResponse(req.id, resp)
         return
     end
 
@@ -122,7 +130,25 @@ local function processOne(filename)
     end
 end
 
+-- Client-only: the MCP bridge serves the listen/SP host. We can't tell who the
+-- host is at autorun (LocalPlayer isn't valid yet), so the client bridge starts
+-- for everyone and a non-host client (a remote player on a listen server) shuts
+-- its own bridge down once LocalPlayer becomes valid. The host's own client keeps
+-- running, so the focus/readiness paths are unaffected. Single-player is always
+-- the host.
+local function clientHostGate()
+    if not CLIENT or MCP._clientGateDone then return end
+    local ply = LocalPlayer()
+    if not IsValid(ply) then return end
+    MCP._clientGateDone = true
+    if not ply:IsListenServerHost() then
+        MCP:StopBridge()
+    end
+end
+
 local function pollTick()
+    clientHostGate()
+
     local now = RealTime()
     local interval = math.max(0.05, GetConVar("mcp_poll_interval"):GetFloat())
     if (now - MCP._lastPoll) < interval then return end

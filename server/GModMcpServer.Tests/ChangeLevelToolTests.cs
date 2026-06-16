@@ -10,9 +10,10 @@ using ModelContextProtocol.Protocol;
 namespace GModMcpServer.Tests;
 
 /// <summary>
-/// host_changelevel flow tests. A single fake responder branches on the function
+/// host_changelevel flow tests. A server fake responder branches on the function
 /// id (_ping vs _changelevel) over mutable state, so we can drive the whole
-/// pre-check → trigger → readiness-wait sequence without a real GMod.
+/// pre-check → trigger → readiness-wait sequence without a real GMod. The readiness
+/// wait is dual-realm, so each test also stands up a ready client responder.
 /// </summary>
 public class ChangeLevelToolTests
 {
@@ -33,6 +34,7 @@ public class ChangeLevelToolTests
             if (changed) { pingsAfterChange++; pending = pingsAfterChange < 2; }
             return Ping("gm_flatgrass", pending);
         });
+        using var clientResponder = new FakeGmodResponder(root.McpRoot, "client", _ => ClientReady());
 
         using var registry = new FileBridgeRegistry(root.McpRoot, NewSessionId(), NullLoggerFactory.Instance);
         var tool = NewTool(root, registry);
@@ -65,6 +67,7 @@ public class ChangeLevelToolTests
             if (changed) { pingsAfterChange++; pending = pingsAfterChange < 2; }
             return Ping("gm_construct", pending);
         });
+        using var clientResponder = new FakeGmodResponder(root.McpRoot, "client", _ => ClientReady());
 
         using var registry = new FileBridgeRegistry(root.McpRoot, NewSessionId(), NullLoggerFactory.Instance);
         var tool = NewTool(root, registry);
@@ -88,6 +91,7 @@ public class ChangeLevelToolTests
             Interlocked.Increment(ref pingCount);
             return Ping("gm_construct", pending: false);
         });
+        using var clientResponder = new FakeGmodResponder(root.McpRoot, "client", _ => ClientReady());
 
         using var registry = new FileBridgeRegistry(root.McpRoot, NewSessionId(), NullLoggerFactory.Instance);
         var tool = NewTool(root, registry);
@@ -98,7 +102,7 @@ public class ChangeLevelToolTests
         {
             Assert.That(res.IsError, Is.True);
             Assert.That(ResultText(res), Does.Contain("not found"));
-            // Only the pre-check ping should have run — no readiness polling.
+            // Only the pre-check ping (server realm) should have run — no readiness polling.
             Assert.That(pingCount, Is.EqualTo(1));
         });
     }
@@ -120,6 +124,7 @@ public class ChangeLevelToolTests
             // false on the pre-check ping, true forever after → never ready → timeout.
             return Ping("gm_construct", pending: changed);
         });
+        using var clientResponder = new FakeGmodResponder(root.McpRoot, "client", _ => ClientReady());
 
         using var registry = new FileBridgeRegistry(root.McpRoot, NewSessionId(), NullLoggerFactory.Instance);
         var tool = NewTool(root, registry);
@@ -139,6 +144,14 @@ public class ChangeLevelToolTests
         ["enabled"] = true,
         ["map"] = map,
         ["bootstrap_pending"] = pending,
+    };
+
+    // Client realm: ready (reachable + enabled) so the dual-realm wait isn't blocked
+    // on it; client carries no bootstrap state.
+    private static JsonObject ClientReady() => new()
+    {
+        ["ok"] = true,
+        ["enabled"] = true,
     };
 
     private static ChangeLevelTool NewTool(TempBridgeRoot root, FileBridgeRegistry registry)
