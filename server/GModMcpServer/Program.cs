@@ -67,17 +67,38 @@ internal static class Program
             builder.Services.AddSingleton(typeof(IHostTool), toolType);
         }
 
-        builder.Services
-            .AddMcpServer(options => options.ServerInstructions = ServerInstructionsText)
-            .WithStdioServerTransport()
-            .WithListToolsHandler(ListToolsAsync)
-            .WithCallToolHandler(CallToolAsync);
+        AddGModMcpServer(builder.Services);
 
         builder.Services.AddHostedService<BridgeHostedService>();
 
         var host = builder.Build();
         await host.RunAsync().ConfigureAwait(false);
         return 0;
+    }
+
+    /// <summary>
+    /// Registers the MCP server: stdio transport, the dynamic tool handlers, and —
+    /// crucially — advertises <c>tools.listChanged</c> so clients honour the
+    /// <c>notifications/tools/list_changed</c> we emit on manifest changes. The manual
+    /// <c>WithListToolsHandler</c> path leaves that flag unset (only the
+    /// attribute/collection tool path auto-sets it), so we flip it last, on the Tools
+    /// capability the handler wiring already created. Shared with the tests so the
+    /// capability advertisement can't silently regress.
+    /// </summary>
+    internal static void AddGModMcpServer(IServiceCollection services)
+    {
+        services
+            .AddMcpServer(options => options.ServerInstructions = ServerInstructionsText)
+            .WithStdioServerTransport()
+            .WithListToolsHandler(ListToolsAsync)
+            .WithCallToolHandler(CallToolAsync);
+
+        services.Configure<McpServerOptions>(options =>
+        {
+            options.Capabilities ??= new ServerCapabilities();
+            options.Capabilities.Tools ??= new ToolsCapability();
+            options.Capabilities.Tools.ListChanged = true;
+        });
     }
 
     private static string ResolveDataPath(IConfiguration cfg)
