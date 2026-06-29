@@ -145,6 +145,7 @@ public sealed class MergedManifest
         if (a.Realm != b.Realm) return false;
         if (a.FunctionId != b.FunctionId) return false;
         if (a.Entry.Description != b.Entry.Description) return false;
+        if (a.Entry.Timeout != b.Entry.Timeout) return false;
         if (!StringListEquals(a.Entry.Requires, b.Entry.Requires)) return false;
         return SchemaEquals(a.Entry.Schema, b.Entry.Schema);
     }

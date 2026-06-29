@@ -43,6 +43,24 @@ public class MergedManifestEqualsTests
 	}
 
 	[Test]
+	public void Equals_WhenTimeoutDiffers_ReturnsFalse()
+	{
+		var a = BuildManifest();
+		var b = BuildManifest(timeout: 33);
+
+		Assert.That(a.Equals(b), Is.False);
+	}
+
+	[Test]
+	public void Equals_WhenTimeoutMatches_ReturnsTrue()
+	{
+		var a = BuildManifest(timeout: 33);
+		var b = BuildManifest(timeout: 33);
+
+		Assert.That(a.Equals(b), Is.True);
+	}
+
+	[Test]
 	public void Equals_WhenCapabilityCurrentDiffers_ReturnsFalse()
 	{
 		var a = BuildManifest();
@@ -90,7 +108,8 @@ public class MergedManifestEqualsTests
 		string toolDescription = "Default description.",
 		JsonNode? schema = null,
 		List<string>? requires = null,
-		bool capabilityCurrent = false)
+		bool capabilityCurrent = false,
+		double? timeout = null)
 	{
 		var manifest = new MergedManifest();
 		manifest.Tools["lua_run_sv"] = new ToolDescriptor(
@@ -104,6 +123,7 @@ public class MergedManifestEqualsTests
 				Schema = schema ?? JsonNode.Parse("""{"type":"object","properties":{"code":{"type":"string"}},"required":["code"]}"""),
 				Requires = requires ?? new List<string> { "unsafe" },
 				Realm = "server",
+				Timeout = timeout,
 			});
 		manifest.Capabilities["unsafe"] = new CapabilityEntry
 		{

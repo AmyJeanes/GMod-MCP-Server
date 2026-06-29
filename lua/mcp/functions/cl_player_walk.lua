@@ -12,12 +12,12 @@
 -- handler spans many frames, so it defers via ctx.respond -- and times with RealTime,
 -- never timer.Simple.
 
--- Capped under the .NET bridge's 10s per-call request timeout (Program.cs): the
--- handler blocks until the walk ends, so a longer cap would time out host-side
--- (returning an error while the walk runs on, orphaned, in-game). +1s hardDeadline
--- backstop still lands under 10s. Long "spin over time" motions want a future
--- background/poll mode, not a longer block.
-local MAX_SECONDS = 8
+-- The handler blocks until the walk ends, so the .NET host must wait at least this
+-- long: player_walk declares a per-tool request timeout of MAX_SECONDS + 3 in its
+-- registration (the host clamps it to its own max), instead of the host's 10s
+-- default. Keep this <= the host's clamp. Long "spin over time" motions beyond this
+-- want a future background/poll mode, not a longer block.
+local MAX_SECONDS = 30
 local STUCK_SPEED = 5     -- u/s horizontal: below this we count as "not moving"
 local STUCK_GRACE = 0.4   -- sustained no-progress time that ends a stuck run
 local SAMPLE_INTERVAL = 0.05
@@ -72,6 +72,9 @@ end
 
 MCP:AddFunction({
     id = "player_walk",
+    -- Blocking handler: tell the host to wait up to the full walk (hardDeadline =
+    -- seconds + 1) plus bridge/poll slack, instead of its default 10s per call.
+    timeout = MAX_SECONDS + 3,
     description = "Walk the local (host) player naturally by driving the real movement code (CUserCmd each tick), so grounded-locomotion bugs reproduce -- unlike teleport or `+forward`. Walks correctly through world-portals/TARDIS/safe-space transitions (real movement triggers their teleport). Set analog forward/side (-1..1, relative to view yaw), sprint/crouch, a single `jump` or continuous `bhop`, and a view: a held `angles`, `look_at`/`look_at_entity` tracking, or a continuous `yaw_rate`/`pitch_rate` spin. `oscillate` adds a sine weave to forward or side (slalom/patrol). Runs for `seconds` (required) or until the first of `distance`, `stop_on_teleport`, `stop_near`, `until`, or stuck. Returns the downsampled trajectory, start/end pose, displacement, max speed, airborne/movetype/frozen, and `teleported`/`view_hold_released`. `ended_reason` is duration|distance|stuck|teleport|near|until. Client/host only.",
     schema = {
         type = "object",

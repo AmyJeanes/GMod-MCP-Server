@@ -99,6 +99,15 @@ function MCP:AddFunction(t)
         end
     end
 
+    -- Optional per-tool request timeout (seconds): how long the .NET host waits for
+    -- this tool's response before giving up. Long-running blocking handlers (e.g.
+    -- player_walk) declare it so the host's default 10s doesn't cut them off; the
+    -- host clamps it to its own sane maximum.
+    local timeout = t.timeout
+    if timeout ~= nil and (type(timeout) ~= "number" or timeout <= 0) then
+        error("MCP:AddFunction `timeout` must be a positive number of seconds", 2)
+    end
+
     self._functions[t.id] = {
         id = t.id,
         description = t.description or "",
@@ -106,6 +115,7 @@ function MCP:AddFunction(t)
         requires = requires,
         handler = t.handler,
         realm = MCP.util.RealmName(),
+        timeout = timeout,
         _generation = self._generation,
     }
 
@@ -292,6 +302,7 @@ function MCP:BuildManifest()
             schema = fn.schema,
             requires = fn.requires,
             realm = fn.realm,
+            timeout = fn.timeout,
         }
     end
 

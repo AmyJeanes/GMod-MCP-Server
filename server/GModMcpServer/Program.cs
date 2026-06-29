@@ -212,7 +212,7 @@ internal static class Program
 
         try
         {
-            var resp = await bridge.SendAsync(descriptor.FunctionId, argsElement, TimeSpan.FromSeconds(10), ct)
+            var resp = await bridge.SendAsync(descriptor.FunctionId, argsElement, ResolveCallTimeout(descriptor.Entry.Timeout), ct)
                 .ConfigureAwait(false);
 
             var resultJson = resp.Result?.ToJsonString() ?? "null";
@@ -243,6 +243,22 @@ internal static class Program
         IsError = true,
         Content = new List<ContentBlock> { new TextContentBlock { Text = message } },
     };
+
+    private static readonly TimeSpan DefaultBridgeTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MaxBridgeTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// The per-call wait for a bridge tool. A tool may declare its own timeout in
+    /// the manifest (for long-running blocking handlers like player_walk); it's
+    /// clamped to <see cref="MaxBridgeTimeout"/> so a stray value can't make the
+    /// host wait near-forever on a hung call. Absent/invalid =&gt; the default.
+    /// </summary>
+    private static TimeSpan ResolveCallTimeout(double? declaredSeconds)
+    {
+        if (declaredSeconds is not { } s || s <= 0 || double.IsNaN(s)) return DefaultBridgeTimeout;
+        var t = TimeSpan.FromSeconds(s);
+        return t > MaxBridgeTimeout ? MaxBridgeTimeout : t;
+    }
 
     /// <summary>
     /// Convert a Lua-side response into MCP content blocks. If the handler

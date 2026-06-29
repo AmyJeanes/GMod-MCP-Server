@@ -38,6 +38,14 @@ public sealed class FunctionEntry
 
     [JsonPropertyName("realm")]
     public string Realm { get; init; } = "";
+
+    /// <summary>
+    /// Optional per-tool request timeout in seconds. Long-running blocking handlers
+    /// (e.g. player_walk) declare this so the host waits for them instead of the
+    /// default; the host clamps it to its own maximum. Absent =&gt; host default.
+    /// </summary>
+    [JsonPropertyName("timeout")]
+    public double? Timeout { get; init; }
 }
 
 public sealed class CapabilityEntry
