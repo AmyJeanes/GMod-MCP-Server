@@ -22,13 +22,16 @@
 --                            physical, so a mid-air lock STILL FALLS to the floor. Freeze()
 --                            does not counteract gravity.
 
-local SETTLE_CAP = 0.5     -- give up waiting for stillness after this long; report as-is
-local MIN_SETTLE = 0.1     -- never declare "settled" before this -- lets gravity reveal a fall
+local SETTLE_CAP = 1.0     -- give up waiting for stillness after this long; report as-is. Generous
+                           -- so a normal placement plus a modest fall settles inside it (fall time
+                           -- + dwell); a longer fall honestly reports settled=false, still moving.
+local STILL_DWELL = 0.1    -- velocity must stay at-rest (the dwell) this long to count as settled.
+                           -- Also keeps a fall from false-settling: a from-rest drop accelerates
+                           -- past STILL_SPEED within a frame or two, breaking the dwell.
 -- Gate stillness on velocity, NOT per-frame position delta: a just-placed pose starts at ~0
 -- speed, so a position gate false-settles the first frames of a fall before it accelerates
 -- (observed live -- a mid-air drop wrongly reported settled). A real fall reads >this at once.
 local STILL_SPEED = 5      -- velocity (u/s) below which the pose counts as at rest
-local STILL_FRAMES = 3     -- consecutive at-rest frames that mean the pose has come to rest
 
 local MOVETYPE_NAMES = {
     [MOVETYPE_NONE] = "none",
@@ -281,16 +284,15 @@ MCP:AddFunction({
         if killVel then ply:SetVelocity(-ply:GetVelocity()) end
         if lockControls ~= nil then ply:Freeze(lockControls) end
 
-        local hookId = "MCP_PlayerPlace_" .. tostring(SysTime()) .. "_" .. tostring(math.random(1, 1e9))
-        local startSettle = RealTime()
-        local deadline = startSettle + SETTLE_CAP
-        local stillFrames = 0
-        local fired = false
-
-        local function finish(settled)
-            if fired then return end
-            fired = true
-            hook.Remove("Think", hookId)
+        -- Settle on VELOCITY (not position): a just-placed pose starts at ~0 speed, so a
+        -- position gate false-settles the first frames of a fall before it accelerates. The
+        -- dwell handles the fall too -- a falling player can't stay under STILL_SPEED for a
+        -- continuous STILL_DWELL, so it never settles mid-fall.
+        MCP:Settle({
+            seconds = SETTLE_CAP,
+            stable_for = STILL_DWELL,
+            check = function() return IsValid(ply) and ply:GetVelocity():Length() < STILL_SPEED end,
+        }, function(s)
             if not IsValid(ply) then
                 ctx.respond({ ok = false, error = "target became invalid during placement settle" })
                 return
@@ -299,8 +301,8 @@ MCP:AddFunction({
             local endPos = ply:GetPos()
             local result = {
                 ok = true,
-                settled = settled,
-                settle_time = math.Round(RealTime() - startSettle, 2),
+                settled = s.settled,
+                settle_time = math.Round(s.elapsed, 2),
                 start = { pos = vec3(startPos), ang = ang3(startAng) },
                 final = {
                     pos = vec3(endPos),
@@ -325,21 +327,6 @@ MCP:AddFunction({
             end
             if appliedAng then result.requested_ang = ang3(appliedAng) end
             ctx.respond(result)
-        end
-
-        hook.Add("Think", hookId, function()
-            if fired then return end
-            if not IsValid(ply) then return finish(false) end
-
-            local now = RealTime()
-            if ply:GetVelocity():Length() < STILL_SPEED then
-                stillFrames = stillFrames + 1
-            else
-                stillFrames = 0
-            end
-
-            if (now - startSettle) >= MIN_SETTLE and stillFrames >= STILL_FRAMES then return finish(true) end
-            if now >= deadline then return finish(false) end
         end)
 
         return ctx.deferred

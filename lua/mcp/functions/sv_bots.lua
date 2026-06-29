@@ -155,22 +155,18 @@ MCP:AddFunction({
         end
 
         -- Kick is deferred (the player leaves over the next tick or two), so wait until the
-        -- kicked entities are invalid before reporting the settled bot count.
-        local hookId = "MCP_RemoveBot_" .. tostring(SysTime()) .. "_" .. tostring(math.random(1, 1e9))
-        local deadline = RealTime() + 1
-        local fired = false
-        local function finish()
-            if fired then return end
-            fired = true
-            hook.Remove("Think", hookId)
+        -- kicked entities are invalid before reporting the settled bot count. No dwell needed
+        -- (gone stays gone), so stable_for defaults to 0 -- resolve the instant all are gone.
+        MCP:Settle({
+            seconds = 1,
+            check = function()
+                for _, e in ipairs(removedEnts) do
+                    if IsValid(e) then return false end
+                end
+                return true
+            end,
+        }, function()
             ctx.respond({ ok = true, removed = removed, remaining_bots = #player.GetBots() })
-        end
-        hook.Add("Think", hookId, function()
-            local allGone = true
-            for _, e in ipairs(removedEnts) do
-                if IsValid(e) then allGone = false break end
-            end
-            if allGone or RealTime() >= deadline then finish() end
         end)
 
         return ctx.deferred

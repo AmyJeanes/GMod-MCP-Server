@@ -50,6 +50,15 @@ Built-in capabilities live in `lua/mcp/libraries/sh_capabilities.lua` — curren
 
 **Gate on arbitrary-code execution, not read-vs-write.** `unsafe` is for tools that run caller-supplied Lua or wield arbitrary convar power: `lua_run` (and any `wait_until`/`wait_seconds` args), `console_cmd`, and a general `cvar_set` (it can flip `sv_cheats`/`sv_allowcslua`, so it's `console_cmd`-equivalent — curated *safe* convar knobs belong in an ungated `game_set` instead). Structured tools are **ungated by default whether they read OR write** — a typed `entity_set`/`player_set`/`game_set` can only do what its schema allows, so it doesn't need the dangerous grant. The exception is a single optional caller-Lua arg on an otherwise-ungated tool (e.g. `player_walk`'s `until`), which is gated *per-arg*, not whole-tool. `requires` stays available to add opt-in caps later (e.g. a movement-control gate, so not everyone gets Claude driving their player).
 
+## Deferred waits (RunFor / Settle)
+
+A handler that must wait for an effect across frames defers (`return ctx.deferred`) and resolves later via `ctx.respond`. Two shared primitives in `lua/mcp/libraries/libraries/sh_runfor.lua` drive these — both RealTime + `Think`, never `timer.Simple`:
+
+- `MCP:RunFor(opts, onDone)` — the base bounded per-frame loop: runs `on_each(elapsed)` and/or polls `stop(elapsed)` each frame up to `seconds`; resolves once with `reason` = `stop` / `duration` / `error` (`on_each`/`stop` are pcall'd; a throw ends it as `error`). The windowed-loop core for sample-per-frame tools.
+- `MCP:Settle(opts, onDone)` — layered on RunFor: resolves when `check(elapsed)` has held **continuously** for `stable_for` (the dwell, so a transient blip can't false-settle), else times out. The caller supplies `check` because the harness can't know what "settled" means — velocity for poses, existence for removes. `settled = (reason == "stop")`.
+
+A tool's `seconds` must sit under its declared `timeout` (per-tool request timeout) or the .NET host abandons the call before the wait finishes. **Gate stillness on velocity, not per-frame position** — a from-rest drop starts at ~0 speed, so a position gate false-settles before the fall accelerates. Consumers: `player_set`, `bot_remove`. (`bot_spawn`'s multi-phase respawn is a deliberately frame-counted state machine, not a settle, so it stays hand-rolled.)
+
 ## Tooling
 
 - `.luarc.json` configures sumneko-LuaLS with `./.tools/glua-api` (GLua type stubs).
