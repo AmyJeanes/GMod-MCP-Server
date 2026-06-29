@@ -40,7 +40,9 @@ The client-realm bridge serves the listen/SP **host** — the machine whose `dat
 
 ## Capabilities
 
-Sensitive tools declare `requires = { "<cap-id>" }`. Capabilities are registered with `MCP:AddCapability({ id = "...", default = false })` — the framework auto-derives the convar (`mcp_allow_<id>`) and creates it `FCVAR_PROTECTED | FCVAR_DONTRECORD | FCVAR_REPLICATED | FCVAR_ARCHIVE`. Replicated so server-side toggles propagate to clients; archived so user grants persist across game restarts. Don't reach for the convar directly; let the framework gate.
+Sensitive tools declare `requires = { "<cap-id>" }` (whole-tool). Capabilities are registered with `MCP:AddCapability({ id = "...", default = false })` — the framework auto-derives the convar (`mcp_allow_<id>`) and creates it `FCVAR_PROTECTED | FCVAR_DONTRECORD | FCVAR_REPLICATED | FCVAR_ARCHIVE`. Replicated so server-side toggles propagate to clients; archived so user grants persist across game restarts. Don't reach for the convar directly; let the framework gate.
+
+To gate **one argument** of an otherwise-ungated tool, declare `arg_requires = { [argName] = { "<cap-id>" } }`. Dispatch (`MCP:CheckCapabilities`) rejects that arg when ungranted but only if it's actually present, so the rest of the tool stays callable — `player_walk`'s caller-Lua `until` is the canonical case. Gated names must be declared schema properties (typos error at registration), and the requirement is conveyed to clients via the arg's schema `description` (per-arg gates aren't carried in the manifest).
 
 Built-in capabilities live in `lua/mcp/libraries/sh_capabilities.lua` — currently just `unsafe`, which gates both `lua_run` and `console_cmd`. The two are equivalent in power (Lua can `RunConsoleCommand`; the console can `lua_run` arbitrary Lua), so a single gate is honest rather than illusory granularity. Project-specific capabilities declare their own.
 

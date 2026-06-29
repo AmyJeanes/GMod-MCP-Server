@@ -99,6 +99,32 @@ function MCP:AddFunction(t)
         end
     end
 
+    -- Per-arg capability gates: { [argName] = { capId, ... } }. Lets an otherwise-
+    -- ungated tool require a capability for a single powerful arg (e.g. a caller-Lua
+    -- `until`); dispatch rejects that arg when ungranted, but the rest of the tool
+    -- stays callable without the grant. Gated args must be declared schema
+    -- properties, so a typo'd name fails loudly instead of silently never gating.
+    local argRequires = t.arg_requires
+    if argRequires ~= nil then
+        if type(argRequires) ~= "table" then
+            error("MCP:AddFunction `arg_requires` must be a map of arg name -> capability id list", 2)
+        end
+        local props = type(t.schema) == "table" and t.schema.properties or nil
+        for argName, caps in pairs(argRequires) do
+            if type(caps) ~= "table" then
+                error("function `" .. t.id .. "` arg_requires['" .. tostring(argName) .. "'] must be a list of capability ids", 2)
+            end
+            for _, capId in ipairs(caps) do
+                if not self._capabilities[capId] then
+                    error("function `" .. t.id .. "` arg `" .. tostring(argName) .. "` requires unknown capability `" .. capId .. "`", 2)
+                end
+            end
+            if type(props) ~= "table" or props[argName] == nil then
+                error("function `" .. t.id .. "` arg_requires gates `" .. tostring(argName) .. "` which isn't a declared schema property", 2)
+            end
+        end
+    end
+
     -- Optional per-tool request timeout (seconds): how long the .NET host waits for
     -- this tool's response before giving up. Long-running blocking handlers (e.g.
     -- player_walk) declare it so the host's default 10s doesn't cut them off; the
@@ -113,6 +139,7 @@ function MCP:AddFunction(t)
         description = t.description or "",
         schema = normalizeSchema(t.schema),
         requires = requires,
+        arg_requires = argRequires,
         handler = t.handler,
         realm = MCP.util.RealmName(),
         timeout = timeout,
@@ -122,14 +149,41 @@ function MCP:AddFunction(t)
     scheduleManifestWrite()
 end
 
-function MCP:CheckCapabilities(fn)
+-- Resolve one capability id to its grant state: "ok", "missing" (not registered),
+-- or "disabled" (registered but its convar is 0) + the convar name for the message.
+local function capGrant(self, capId)
+    local cap = self._capabilities[capId]
+    if not cap then return "missing" end
+    if not GetConVar(cap.convar):GetBool() then return "disabled", cap.convar end
+    return "ok"
+end
+
+-- Gate a call: the whole-tool `requires`, then any per-arg `arg_requires` whose arg
+-- is actually present (an absent gated arg doesn't trip the gate, so the rest of an
+-- otherwise-ungated tool stays usable without the grant). `args` may be nil.
+function MCP:CheckCapabilities(fn, args)
     for _, capId in ipairs(fn.requires) do
-        local cap = self._capabilities[capId]
-        if not cap then
+        local state, convar = capGrant(self, capId)
+        if state == "missing" then
             return false, "function references missing capability: " .. capId
+        elseif state == "disabled" then
+            return false, "capability disabled: " .. capId .. " (set " .. convar .. " 1 to enable)"
         end
-        if not GetConVar(cap.convar):GetBool() then
-            return false, "capability disabled: " .. capId .. " (set " .. cap.convar .. " 1 to enable)"
+    end
+
+    if fn.arg_requires and type(args) == "table" then
+        for argName, caps in pairs(fn.arg_requires) do
+            if args[argName] ~= nil then
+                for _, capId in ipairs(caps) do
+                    local state, convar = capGrant(self, capId)
+                    if state == "missing" then
+                        return false, "`" .. argName .. "` references missing capability: " .. capId
+                    elseif state == "disabled" then
+                        return false, "`" .. argName .. "` requires the " .. capId ..
+                            " capability (set " .. convar .. " 1 to enable); omit `" .. argName .. "` to use the rest of the tool"
+                    end
+                end
+            end
         end
     end
 
@@ -242,7 +296,7 @@ function MCP:Dispatch(funcId, args, respondLater, reqId)
         if not fn then
             response = { ok = false, error = "unknown function: " .. tostring(funcId) }
         else
-            local capOk, capErr = self:CheckCapabilities(fn)
+            local capOk, capErr = self:CheckCapabilities(fn, args)
             if not capOk then
                 response = { ok = false, error = capErr }
             else

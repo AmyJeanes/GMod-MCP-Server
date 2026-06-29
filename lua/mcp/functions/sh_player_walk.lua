@@ -251,6 +251,10 @@ MCP:AddFunction({
     -- Blocking handler: tell the host to wait up to the full walk (hardDeadline =
     -- seconds + 1) plus bridge/poll slack, instead of its default 10s per call.
     timeout = MAX_SECONDS + 3,
+    -- Only `until` runs caller-supplied Lua, so gate just that arg on `unsafe` --
+    -- the rest of player_walk stays ungated. Dispatch rejects `until` when ungranted
+    -- before the handler runs.
+    arg_requires = { ["until"] = { "unsafe" } },
     description = CLIENT and clientDesc or serverDesc,
     schema = schema,
     handler = function(args, ctx)
@@ -358,15 +362,10 @@ MCP:AddFunction({
             end
         end
 
-        -- `until`: arbitrary Lua, gated per-argument by reusing the framework's
-        -- whole-tool capability check -- only this one powerful arg needs `unsafe`,
-        -- so the rest of player_walk stays usable when it isn't granted.
+        -- `until`: arbitrary Lua, declared in arg_requires as needing `unsafe`. The
+        -- dispatch gate already rejected it if ungranted, so here we only compile.
         local untilFn
         if args["until"] ~= nil then
-            local capOk, capErr = MCP:CheckCapabilities({ requires = { "unsafe" } })
-            if not capOk then
-                return { ok = false, error = "`until` (Lua condition) needs the unsafe capability -- " .. capErr }
-            end
             local compiled = CompileString("return (" .. tostring(args["until"]) .. ")", "player_walk_until", false)
             if type(compiled) == "string" then return { ok = false, error = "`until` compile error: " .. compiled } end
             untilFn = compiled

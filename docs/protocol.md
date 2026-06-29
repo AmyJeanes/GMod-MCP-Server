@@ -133,6 +133,22 @@ When a tool's `requires` list contains a capability whose convar is `0`, GMod re
 
 The handler is never reached.
 
+### Per-argument gates
+
+An otherwise-ungated tool can require a capability for a single powerful argument via `arg_requires = { [argName] = { capId } }` in its `MCP:AddFunction` registration — e.g. `player_walk`'s caller-Lua `until` needs `unsafe`. The gate is checked at dispatch (after the whole-tool `requires`) but only fires when the gated arg is **actually present**, so the rest of the tool stays callable without the grant. When it does fire:
+
+```json
+{
+  "id": "...",
+  "result": {
+    "ok": false,
+    "error": "`until` requires the unsafe capability (set mcp_allow_unsafe 1 to enable); omit `until` to use the rest of the tool"
+  }
+}
+```
+
+Gated arg names must be declared schema properties (a typo fails loudly at registration). Per-arg gates are enforced GMod-side and aren't carried in the manifest; the requirement is conveyed to clients through the argument's schema `description`.
+
 ## Hot reload
 
 Two paths produce a fresh manifest:
