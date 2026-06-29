@@ -1,10 +1,10 @@
--- spawn_bot / remove_bot: manage test bots on a listen server. Bots are the only way to
+-- bot_spawn / bot_remove: manage test bots on a listen server. Bots are the only way to
 -- exercise multiplayer behaviour on a listen/SP host; drive them with player_walk_sv.
 -- Server-only (bots exist server-side). Ungated -- both are bounded actions, not the
 -- arbitrary-code power that `unsafe` gates.
 
 -- Resolve a single target player from name/userid/entindex, and require it to be a bot
--- (remove_bot must never kick a human or the host).
+-- (bot_remove must never kick a human or the host).
 local function resolveBot(args)
     local p
     if args.name ~= nil then
@@ -35,12 +35,12 @@ local function resolveBot(args)
         p = e
     end
     if not IsValid(p) then return nil, "could not resolve a target player" end
-    if not p:IsBot() then return nil, "target '" .. p:Nick() .. "' is not a bot -- remove_bot only kicks bots" end
+    if not p:IsBot() then return nil, "target '" .. p:Nick() .. "' is not a bot -- bot_remove only kicks bots" end
     return p
 end
 
 MCP:AddFunction({
-    id = "spawn_bot",
+    id = "bot_spawn",
     description = "Spawn one or more bots on the server (needs a listen server -- maxplayers>1). Each bot is created with player.CreateNextBot and respawned once to clear the first-spawn clientside crouch desync, so it stands correctly. Bots are the only way to test multiplayer behaviour on a listen/SP host; drive them with player_walk_sv. Returns the spawned bots' identities. Server realm.",
     schema = {
         type = "object",
@@ -114,7 +114,7 @@ MCP:AddFunction({
 })
 
 MCP:AddFunction({
-    id = "remove_bot",
+    id = "bot_remove",
     description = "Remove (kick) bots from the server. Set `all` to remove every bot, or target exactly one with `name`/`userid`/`entindex`. Only ever kicks bots -- a selector resolving to a human or the host is refused. Waits for the disconnect to settle, then returns the bots removed and the remaining bot count. Server realm.",
     schema = {
         type = "object",
@@ -151,7 +151,7 @@ MCP:AddFunction({
         for _, b in ipairs(targets) do
             removed[#removed + 1] = { name = b:Nick(), userid = b:UserID(), entindex = b:EntIndex() }
             removedEnts[#removedEnts + 1] = b
-            b:Kick("MCP remove_bot")
+            b:Kick("MCP bot_remove")
         end
 
         -- Kick is deferred (the player leaves over the next tick or two), so wait until the
