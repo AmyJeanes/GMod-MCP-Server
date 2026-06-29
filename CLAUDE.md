@@ -44,6 +44,8 @@ Sensitive tools declare `requires = { "<cap-id>" }`. Capabilities are registered
 
 Built-in capabilities live in `lua/mcp/libraries/sh_capabilities.lua` — currently just `unsafe`, which gates both `lua_run` and `console_cmd`. The two are equivalent in power (Lua can `RunConsoleCommand`; the console can `lua_run` arbitrary Lua), so a single gate is honest rather than illusory granularity. Project-specific capabilities declare their own.
 
+**Gate on arbitrary-code execution, not read-vs-write.** `unsafe` is for tools that run caller-supplied Lua or wield arbitrary convar power: `lua_run` (and any `wait_until`/`wait_seconds` args), `console_cmd`, and a general `cvar_set` (it can flip `sv_cheats`/`sv_allowcslua`, so it's `console_cmd`-equivalent — curated *safe* convar knobs belong in an ungated `game_set` instead). Structured tools are **ungated by default whether they read OR write** — a typed `entity_set`/`player_set`/`game_set` can only do what its schema allows, so it doesn't need the dangerous grant. The exception is a single optional caller-Lua arg on an otherwise-ungated tool (e.g. `player_walk`'s `until`), which is gated *per-arg*, not whole-tool. `requires` stays available to add opt-in caps later (e.g. a movement-control gate, so not everyone gets Claude driving their player).
+
 ## Tooling
 
 - `.luarc.json` configures sumneko-LuaLS with `./.tools/glua-api` (GLua type stubs).
