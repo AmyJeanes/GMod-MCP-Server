@@ -12,7 +12,7 @@
 
 MCP:AddFunction({
     id = "console_cmd",
-    description = "Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). Output is async — poll it back with console_read. Gated by the unsafe capability (console commands are as powerful as arbitrary Lua).",
+    description = "Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). Output is async — poll it back with console_read.",
     schema = {
         type = "object",
         properties = {

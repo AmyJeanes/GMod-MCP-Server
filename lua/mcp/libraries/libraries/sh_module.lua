@@ -81,6 +81,51 @@ local function normalizeSchema(s)
     return out
 end
 
+-- Human-readable note derived from a `requires` / `arg_requires` entry so the
+-- capability requirement is advertised in the description automatically (the
+-- structured fields aren't sent over the wire). Keeps the gate and its advertised
+-- note from drifting -- tools never hand-write capability prose.
+local function capNote(caps, perArg)
+    local parts = {}
+    for _, c in ipairs(caps) do parts[#parts + 1] = "`" .. c .. "`" end
+    local note = "Requires the " .. table.concat(parts, ", ") .. " " ..
+        (#caps == 1 and "capability" or "capabilities")
+    if perArg then
+        return note .. "; omit this argument to use the rest of the tool without the grant."
+    end
+    return note .. "."
+end
+
+local function appendSentence(desc, note)
+    desc = desc or ""
+    if desc == "" then return note end
+    return desc .. " " .. note
+end
+
+-- Returns `schema` with the auto cap-note appended to each gated arg's description.
+-- Copies the touched tables so the caller's schema literal isn't mutated, so a
+-- reload re-deriving from the raw description can't double-append.
+local function annotateArgCaps(schema, argRequires)
+    if not argRequires or type(schema) ~= "table" or type(schema.properties) ~= "table" then
+        return schema
+    end
+    local props = {}
+    for k, v in pairs(schema.properties) do props[k] = v end
+    for argName, caps in pairs(argRequires) do
+        local prop = props[argName]
+        if type(prop) == "table" then
+            local copy = {}
+            for k, v in pairs(prop) do copy[k] = v end
+            copy.description = appendSentence(copy.description, capNote(caps, true))
+            props[argName] = copy
+        end
+    end
+    local out = {}
+    for k, v in pairs(schema) do out[k] = v end
+    out.properties = props
+    return out
+end
+
 function MCP:AddFunction(t)
     if type(t) ~= "table" then error("MCP:AddFunction expects a table", 2) end
     validateId("function", t.id)
@@ -134,10 +179,15 @@ function MCP:AddFunction(t)
         error("MCP:AddFunction `timeout` must be a positive number of seconds", 2)
     end
 
+    local description = t.description or ""
+    if #requires > 0 then
+        description = appendSentence(description, capNote(requires, false))
+    end
+
     self._functions[t.id] = {
         id = t.id,
-        description = t.description or "",
-        schema = normalizeSchema(t.schema),
+        description = description,
+        schema = annotateArgCaps(normalizeSchema(t.schema), argRequires),
         requires = requires,
         arg_requires = argRequires,
         handler = t.handler,

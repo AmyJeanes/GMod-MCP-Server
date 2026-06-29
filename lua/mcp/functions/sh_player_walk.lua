@@ -161,7 +161,7 @@ local schema = {
         },
         bhop = {
             type = "boolean",
-            description = "Bunny-hop: keep jumping, re-tapping on each landing, for the whole walk. Mutually exclusive with `jump`. (Speed gain depends on the server's sv_autobunnyhopping.)",
+            description = "Bunny-hop: keep jumping, re-tapping on each landing, for the whole walk. Mutually exclusive with `jump`.",
         },
         angles = {
             type = "array", items = { type = "number" }, minItems = 3, maxItems = 3,
@@ -221,7 +221,7 @@ local schema = {
         },
         ["until"] = {
             type = "string",
-            description = "A Lua expression evaluated " .. (CLIENT and "client" or "server") .. "-side every frame; the walk ends when it returns truthy (ended_reason `until`). E.g. \"" .. untilExample .. "\". REQUIRES the `unsafe` capability -- if not granted, this argument is rejected but the rest of player_walk still works.",
+            description = "A Lua expression evaluated " .. (CLIENT and "client" or "server") .. "-side every frame; the walk ends when it returns truthy (ended_reason `until`). E.g. \"" .. untilExample .. "\".",
         },
     },
     required = { "seconds" },

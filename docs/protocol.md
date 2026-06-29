@@ -131,7 +131,7 @@ When a tool's `requires` list contains a capability whose convar is `0`, GMod re
 }
 ```
 
-The handler is never reached.
+The handler is never reached. The framework auto-appends `Requires the \`<cap>\` capability.` to the tool's `description` at registration, so the gate is advertised to clients (which never receive `requires` itself).
 
 ### Per-argument gates
 
@@ -147,7 +147,7 @@ An otherwise-ungated tool can require a capability for a single powerful argumen
 }
 ```
 
-Gated arg names must be declared schema properties (a typo fails loudly at registration). Per-arg gates are enforced GMod-side and aren't carried in the manifest; the requirement is conveyed to clients through the argument's schema `description`.
+Gated arg names must be declared schema properties (a typo fails loudly at registration). Per-arg gates are enforced GMod-side and aren't carried in the manifest; the requirement is conveyed to clients through the argument's schema `description`, which the framework auto-appends from `arg_requires` (authors don't hand-write it).
 
 ## Hot reload
 
