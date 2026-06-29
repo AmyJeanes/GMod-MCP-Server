@@ -47,6 +47,12 @@ These are the **built-in** tools, grouped by where they run. This is **not** an 
 Implemented by the .NET MCP server itself — available even when GMod isn't running.
 
 <!-- TOOLS:HOST:START -->
+| Tool | Description |
+| --- | --- |
+| `host_launch` | Launch Garry's Mod and wait until the MCP bridge is fully ready before returning. |
+| `host_close` | Close the running GMod process (located by name, regardless of who launched it). |
+| `host_status` | Report whether GMod is running, whether the MCP bridge is reachable (a live ping is sent when GMod is detected), and the current tool count and capability state. |
+| `host_changelevel` | Change the map of the already-running GMod server and block until the new map is ready before returning (the in-game sibling of host_launch's readiness wait). |
 <!-- TOOLS:HOST:END -->
 
 ### Game tools
@@ -54,6 +60,19 @@ Implemented by the .NET MCP server itself — available even when GMod isn't run
 Dispatched into the running game over the file bridge. The framework appends `_sv` (server realm) or `_cl` (client realm) to each name, so the realm is always visible.
 
 <!-- TOOLS:GAME:START -->
+| Tool | Realm | Requires | Description |
+| --- | --- | --- | --- |
+| `console_cmd_cl` | client | `unsafe` | Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). |
+| `console_cmd_sv` | server | `unsafe` | Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). |
+| `console_read_cl` | client | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
+| `console_read_sv` | server | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
+| `lua_run_cl` | client | `unsafe` | Compile and execute Lua source in this realm. |
+| `lua_run_sv` | server | `unsafe` | Compile and execute Lua source in this realm. |
+| `player_walk_cl` | client | — | Walk the local (host) player naturally by driving the real movement code (CUserCmd each tick) via CreateMove, so grounded-locomotion bugs reproduce -- unlike teleport or `+forward`. |
+| `player_walk_sv` | server | — | Walk a target player or bot naturally by driving its CUserCmd each tick via StartCommand -- the canonical way to control bots. |
+| `remove_bot_sv` | server | — | Remove (kick) bots from the server. |
+| `screenshot_cl` | client | — | Capture a JPEG screenshot. |
+| `spawn_bot_sv` | server | — | Spawn one or more bots on the server (needs a listen server -- maxplayers>1). |
 <!-- TOOLS:GAME:END -->
 
 ### Capabilities
@@ -61,6 +80,9 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 Security gates a tool can require (`requires = { ... }`). Each derives an archived `mcp_allow_<id>` convar; grant it in the GMod developer console (e.g. `mcp_allow_unsafe 1`) to enable the tools that depend on it.
 
 <!-- TOOLS:CAPS:START -->
+| Capability | ConVar | Default | Description |
+| --- | --- | --- | --- |
+| `unsafe` | `mcp_allow_unsafe` | off | Unsafe: arbitrary code execution via MCP — Lua source (lua_run) and raw console commands (console_cmd). |
 <!-- TOOLS:CAPS:END -->
 
 ## Console & error capture
