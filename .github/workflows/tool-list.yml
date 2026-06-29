@@ -1,0 +1,40 @@
+name: Tool list
+
+# Keep the README Tools catalog in sync with the source. The generator runs the
+# addon's tool-registration code headlessly (MoonSharp, no game) and reflects the
+# .NET host tools, then rewrites the <!-- TOOLS --> block. On push to main it
+# auto-commits any change ([skip ci] so the commit doesn't re-trigger CI).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    name: Regenerate README tool list
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Regenerate
+        run: dotnet run --project server/GModMcpServer.ToolList -c Release
+
+      - name: Commit if changed
+        run: |
+          if [[ -n "$(git status --porcelain README.md)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add README.md
+            git commit -m "docs: regenerate README tool list [skip ci]"
+            git push
+          else
+            echo "README tool list already up to date."
+          fi

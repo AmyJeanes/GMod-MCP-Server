@@ -101,6 +101,12 @@ Two categories of tool exist on the .NET side:
 
 `host_status` issues a live `_ping` round-trip when GMod is detected so the MCP client can distinguish "running but bridge unreachable" from "running but `mcp_enable` is off." See `docs/protocol.md` for the wire format.
 
+### Tool-list generation (README)
+
+The **Tools** tables in `README.md` are auto-generated — the prose around them is normal README text, but the three tables (between the `<!-- TOOLS:HOST -->`, `<!-- TOOLS:GAME -->`, `<!-- TOOLS:CAPS -->` marker pairs) are not hand-edited. `server/GModMcpServer.ToolList` builds them game-independently: it reflects the host tools via `HostToolCatalog.Describe()` and recovers the GMod bridge tools by running the addon's registration code headlessly under MoonSharp (`LuaToolDump` stubs the few globals touched at file-load, loads `sh_` in both realms, then calls the real `MCP:BuildManifest()`). MoonSharp is a dependency of the generator only, never the shipping server.
+
+`HostToolCatalog.ToolTypes` is the single source of truth for host tools — Program.cs registers DI from it and the generator reflects from it, so a new host tool is picked up by both. Regenerate with `dotnet run --project server/GModMcpServer.ToolList` (`--check` exits non-zero if stale, for CI). The `tool-list.yml` workflow regenerates and auto-commits on push to main.
+
 ## Hot reload
 
 Editing an existing Lua tool file is enough — no console command needed. GMod's autorefresh re-runs the file, `MCP:AddFunction` is idempotent and updates the registry in place, then a debounced 100 ms timer writes a fresh manifest. The .NET host's `ManifestWatcher` notices the content delta and pushes `notifications/tools/list_changed` to the connected MCP client.

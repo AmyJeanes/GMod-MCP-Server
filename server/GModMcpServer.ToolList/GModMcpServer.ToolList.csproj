@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pure-managed Lua interpreter: runs the addon's tool-registration code
+         headlessly (no GMod) to recover each tool's manifest. Generator-only;
+         it is NOT a dependency of the shipping server. -->
+    <PackageReference Include="MoonSharp" Version="2.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- For HostToolCatalog: the .NET host tools' own metadata. -->
+    <ProjectReference Include="..\GModMcpServer\GModMcpServer.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -3,7 +3,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using GModMcpServer.Bridge;
 using GModMcpServer.Host;
-using GModMcpServer.Host.Tools;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -61,10 +60,12 @@ internal static class Program
 
         builder.Services.AddSingleton<McpServerAccessor>();
 
-        builder.Services.AddSingleton<IHostTool, LaunchTool>();
-        builder.Services.AddSingleton<IHostTool, CloseTool>();
-        builder.Services.AddSingleton<IHostTool, StatusTool>();
-        builder.Services.AddSingleton<IHostTool, ChangeLevelTool>();
+        // Host tools come from the catalog so registration and the tool-list
+        // generator (HostToolCatalog.Describe) share one source of truth.
+        foreach (var toolType in HostToolCatalog.ToolTypes)
+        {
+            builder.Services.AddSingleton(typeof(IHostTool), toolType);
+        }
 
         builder.Services
             .AddMcpServer(options => options.ServerInstructions = ServerInstructionsText)

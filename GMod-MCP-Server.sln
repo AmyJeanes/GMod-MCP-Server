@@ -1,3 +1,4 @@
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.5.2.0
@@ -8,20 +9,54 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GModMcpServer", "server\GMo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GModMcpServer.Tests", "server\GModMcpServer.Tests\GModMcpServer.Tests.csproj", "{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GModMcpServer.ToolList", "server\GModMcpServer.ToolList\GModMcpServer.ToolList.csproj", "{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
 		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Debug|x64.Build.0 = Debug|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Debug|x86.Build.0 = Debug|Any CPU
 		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Release|x64.ActiveCfg = Release|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Release|x64.Build.0 = Release|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Release|x86.ActiveCfg = Release|Any CPU
+		{3D2F830E-E31A-5E21-1EE4-112D15A393A6}.Release|x86.Build.0 = Release|Any CPU
 		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Debug|x64.Build.0 = Debug|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Debug|x86.Build.0 = Debug|Any CPU
 		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Release|x64.ActiveCfg = Release|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Release|x64.Build.0 = Release|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Release|x86.ActiveCfg = Release|Any CPU
+		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7}.Release|x86.Build.0 = Release|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Debug|x64.Build.0 = Debug|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Debug|x86.Build.0 = Debug|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Release|x64.ActiveCfg = Release|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Release|x64.Build.0 = Release|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Release|x86.ActiveCfg = Release|Any CPU
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -29,6 +64,7 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{3D2F830E-E31A-5E21-1EE4-112D15A393A6} = {DAD03CFC-D5FA-AC94-41C7-9ABAB326F09E}
 		{4E3F941F-F42B-6F32-2FF5-223E26B4A4B7} = {DAD03CFC-D5FA-AC94-41C7-9ABAB326F09E}
+		{C2424DBE-13C9-42AF-AD4C-B5B5D9E552FD} = {DAD03CFC-D5FA-AC94-41C7-9ABAB326F09E}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {7603E739-B9C8-4871-8541-63C81AB2FD8F}
