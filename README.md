@@ -57,17 +57,18 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 <!-- TOOLS:GAME:START -->
 | Tool | Realm | Requires | Description |
 | --- | --- | --- | --- |
+| `bot_remove_sv` | server | — | Remove (kick) bots from the server. |
+| `bot_spawn_sv` | server | — | Spawn one or more bots on the server (needs a listen server -- maxplayers>1). |
 | `console_cmd_cl` | client | `unsafe` | Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). |
 | `console_cmd_sv` | server | `unsafe` | Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). |
 | `console_read_cl` | client | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
 | `console_read_sv` | server | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
 | `lua_run_cl` | client | `unsafe` | Compile and execute Lua source in this realm. |
 | `lua_run_sv` | server | `unsafe` | Compile and execute Lua source in this realm. |
+| `player_set_sv` | server | — | Set a player or bot's pose and movement state, then wait for it to settle and confirm it stuck. |
 | `player_walk_cl` | client | — | Walk the local (host) player naturally by driving the real movement code (CUserCmd each tick) via CreateMove, so grounded-locomotion bugs reproduce -- unlike teleport or `+forward`. |
 | `player_walk_sv` | server | — | Walk a target player or bot naturally by driving its CUserCmd each tick via StartCommand -- the canonical way to control bots. |
-| `remove_bot_sv` | server | — | Remove (kick) bots from the server. |
 | `screenshot_cl` | client | — | Capture a JPEG screenshot. |
-| `spawn_bot_sv` | server | — | Spawn one or more bots on the server (needs a listen server -- maxplayers>1). |
 <!-- TOOLS:GAME:END -->
 
 ### Capabilities
