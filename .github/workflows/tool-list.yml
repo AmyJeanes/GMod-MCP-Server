@@ -1,24 +1,34 @@
-name: Tool list
+name: Update tool list
 
-# Keep the README Tools catalog in sync with the source. The generator runs the
+# Keep the README Tools tables in sync with the source. The generator runs the
 # addon's tool-registration code headlessly (MoonSharp, no game) and reflects the
-# .NET host tools, then rewrites the <!-- TOOLS --> block. On push to main it
-# auto-commits any change ([skip ci] so the commit doesn't re-trigger CI).
+# .NET host tools, then rewrites the <!-- TOOLS:* --> table blocks. Any change is
+# auto-committed.
+#
+# The push uses secrets.GENERATE_DOCS_TOKEN (a bypassing identity), not the default GITHUB_TOKEN:
+# the branch ruleset only lets admins / the bypass app push to the default branch,
+# and a GITHUB_TOKEN push is rejected ("must be made through a pull request"). The
+# auto-commit only touches README.md, which isn't a trigger path below, so it can't
+# re-trigger this workflow.
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'lua/mcp/**'
+      - 'server/GModMcpServer/Host/**'
+      - 'server/GModMcpServer.ToolList/**'
+      - '.github/workflows/tool-list.yml'
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   regenerate:
-    name: Regenerate README tool list
+    name: Update tool list
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          token: ${{ secrets.GENERATE_DOCS_TOKEN }}
 
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
@@ -28,13 +38,7 @@ jobs:
         run: dotnet run --project server/GModMcpServer.ToolList -c Release
 
       - name: Commit if changed
-        run: |
-          if [[ -n "$(git status --porcelain README.md)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add README.md
-            git commit -m "docs: regenerate README tool list [skip ci]"
-            git push
-          else
-            echo "README tool list already up to date."
-          fi
+        uses: stefanzweifel/git-auto-commit-action@4a55954c782fc1ea30b9056cd3e7a2b40ca8887d # v7
+        with:
+          commit_message: Update tool list
+          file_pattern: README.md
