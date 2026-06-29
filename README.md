@@ -48,6 +48,7 @@ Implemented by the .NET MCP server itself — available even when GMod isn't run
 | `host_close` | Close the running GMod process (located by name, regardless of who launched it). |
 | `host_status` | Report whether GMod is running, whether the MCP bridge is reachable (a live ping is sent when GMod is detected), and the current tool count and capability state. |
 | `host_changelevel` | Change the map of the already-running GMod server and block until the new map is ready before returning (the in-game sibling of host_launch's readiness wait). |
+| `mcp_reload` | Reload the in-game MCP addon (re-run its Lua and restart the bridge) and block until the bridge is back and ready before returning — the host-managed equivalent of running `mcp_reload` in the GMod console, but without the timeout a bare reload causes (the reload tears the bridge down mid-call). |
 <!-- TOOLS:HOST:END -->
 
 ### Game tools

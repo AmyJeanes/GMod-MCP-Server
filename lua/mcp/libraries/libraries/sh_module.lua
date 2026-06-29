@@ -193,7 +193,7 @@ end
 -- or a placeholder if the encode fails (cyclic tables, userdata, etc.).
 local function safeEncode(t)
     if t == nil then return "nil" end
-    local ok, enc = pcall(util.TableToJSON, t, false)
+    local ok, enc = pcall(util.TableToJSON, MCP.util.Serialize(t), false)
     if ok and enc then return enc end
     return "<unencodable>"
 end

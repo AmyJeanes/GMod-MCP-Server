@@ -47,6 +47,7 @@ public sealed class BridgePinger
             bool? singlePlayer = null;
             string? bootstrapError = null;
             bool? hasFocus = null;
+            int? generation = null;
             if (resp.Result is JsonObject obj)
             {
                 if (obj.TryGetPropertyValue("enabled", out var enNode)
@@ -78,6 +79,14 @@ public sealed class BridgePinger
                     else if (mpVal.TryGetValue<double>(out var mpDbl)) maxPlayers = (int)mpDbl;
                 }
 
+                // Bumped by MCP:Reload; the mcp_reload host tool watches it advance.
+                // Like maxplayers, may arrive as int or double depending on encoder.
+                if (obj.TryGetPropertyValue("generation", out var genNode) && genNode is JsonValue genVal)
+                {
+                    if (genVal.TryGetValue<int>(out var genInt)) generation = genInt;
+                    else if (genVal.TryGetValue<double>(out var genDbl)) generation = (int)genDbl;
+                }
+
                 if (obj.TryGetPropertyValue("singleplayer", out var spNode)
                     && spNode is JsonValue spVal
                     && spVal.TryGetValue<bool>(out var spBool))
@@ -102,15 +111,15 @@ public sealed class BridgePinger
                 }
             }
 
-            return new BridgePingResult(true, sw.Elapsed.TotalMilliseconds, enabled, map, bootstrapPending, maxPlayers, singlePlayer, bootstrapError, hasFocus);
+            return new BridgePingResult(true, sw.Elapsed.TotalMilliseconds, enabled, map, bootstrapPending, maxPlayers, singlePlayer, bootstrapError, hasFocus, generation);
         }
         catch (TaskCanceledException)
         {
-            return new BridgePingResult(false, null, null, null, null, null, null, null, null);
+            return new BridgePingResult(false, null, null, null, null, null, null, null, null, null);
         }
         catch (Exception)
         {
-            return new BridgePingResult(false, null, null, null, null, null, null, null, null);
+            return new BridgePingResult(false, null, null, null, null, null, null, null, null, null);
         }
     }
 
@@ -168,4 +177,5 @@ public readonly record struct BridgePingResult(
     int? MaxPlayers,
     bool? SinglePlayer,
     string? BootstrapError,
-    bool? HasFocus);
+    bool? HasFocus,
+    int? Generation);

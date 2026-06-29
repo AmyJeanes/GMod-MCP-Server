@@ -19,6 +19,7 @@ public static class HostToolCatalog
         typeof(CloseTool),
         typeof(StatusTool),
         typeof(ChangeLevelTool),
+        typeof(ReloadTool),
     };
 
     /// <summary>

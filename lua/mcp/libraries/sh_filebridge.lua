@@ -19,8 +19,11 @@ local function outboxDir() return "mcp/" .. MCP.util.RealmName() .. "/out" end
 
 local function writeResponse(reqId, response)
     if not MCP.util.IsSafeId(reqId) then return end
+    -- Serialize on the way out so any handler return (or a raw `lua_run` value)
+    -- with GMod types / cycles / userdata becomes JSON-safe instead of crashing
+    -- the encode or emitting `table: 0x…`. Idempotent on already-clean tables.
     file.Write(outboxDir() .. "/" .. reqId .. ".json",
-        MCP.util.JsonEncode({ id = reqId, result = response }, false))
+        MCP.util.JsonEncode({ id = reqId, result = MCP.util.Serialize(response) }, false))
 end
 
 -- Piggyback passive console/error events (sh_capture.lua) onto a dispatch
@@ -82,6 +85,10 @@ local function processOne(filename)
             -- caller a relaunch is needed to switch modes.
             maxplayers = game.MaxPlayers(),
             singleplayer = game.SinglePlayer(),
+            -- Bumped by MCP:Reload; the mcp_reload host tool watches this advance to
+            -- confirm the reload finished (the reload's own response gets eaten when
+            -- StartBridge clears the IPC dirs).
+            generation = MCP._generation or 0,
             -- True while a host_launch intent is queued or mid-transition. The
             -- bridge starts polling well before `InitPostEntity` fires, and the
             -- target map can be the same as the bootstrap map, so map name
@@ -115,6 +122,17 @@ local function processOne(filename)
             result = { ok = false, error = "_changelevel is only available on the server realm" }
         end
         writeResponse(req.id, result)
+        return
+    end
+
+    -- Bridge-internal hot reload (the mcp_reload host tool). Re-runs the addon Lua
+    -- and restarts the bridge via the mcp_reload concommand (which also broadcasts
+    -- to clients). The restart clears the IPC dirs, so this reply is usually eaten
+    -- before the host reads it — expected: the tool waits on the _generation bump
+    -- (_ping), not on this response.
+    if req.function_id == "_reload" then
+        writeResponse(req.id, { ok = true, reloading = true, generation = MCP._generation or 0 })
+        RunConsoleCommand("mcp_reload")
         return
     end
 
