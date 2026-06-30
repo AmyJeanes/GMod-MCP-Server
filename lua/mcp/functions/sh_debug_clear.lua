@@ -26,6 +26,9 @@ MCP:AddFunction({
         for _, h in ipairs(found) do
             hook.Remove(h.event, h.id)
         end
+        -- The sweep removed every mcp_debug_ hook, debug_draw's included, so its record
+        -- table (client-only) is now all stale -- drop it so handles do not leak.
+        if CLIENT then MCP._debugDraws = nil end
         return {
             ok = true,
             realm = MCP.util.RealmName(),
