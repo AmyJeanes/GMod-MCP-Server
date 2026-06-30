@@ -32,7 +32,7 @@ A `sh_lua_run.lua` is included on both server and client, so `MCP:AddFunction` r
 
 ### Tool naming
 
-The framework always appends `_sv` or `_cl` to the MCP tool name on the .NET side, so realm is always visible in the tool list. Don't include `_sv`/`_cl` in your `id` field.
+The framework always appends `_sv` or `_cl` to the MCP tool name on the .NET side, so realm is always visible in the tool list. Don't include `_sv`/`_cl` in your `id` field. Likewise the .NET host appends `(server realm)`/`(client realm)` to every tool's `description`, so **don't state the realm in the description** — hand-writing "Server realm." is redundant (same principle as not hand-writing capability prose, below). Keep only cross-realm *semantics* worth knowing — how a `sh_` tool's `_sv` and `_cl` differ or agree (PVS divergence, client-prediction drift, identical results) — never the bare realm label.
 
 ### Client bridge runs only for the listen-server host
 

@@ -41,7 +41,7 @@ end
 
 MCP:AddFunction({
     id = "bot_spawn",
-    description = "Spawn one or more bots on the server (needs a listen server -- maxplayers>1). Each bot is created with player.CreateNextBot and respawned once to clear the first-spawn clientside crouch desync, so it stands correctly. Bots are the only way to test multiplayer behaviour on a listen/SP host; drive them with player_walk_sv. Returns the spawned bots' identities. Server realm.",
+    description = "Spawn one or more bots on the server (needs a listen server -- maxplayers>1). Each bot is created with player.CreateNextBot and respawned once to clear the first-spawn clientside crouch desync, so it stands correctly. Bots are the only way to test multiplayer behaviour on a listen/SP host; drive them with player_walk_sv. Returns the spawned bots' identities.",
     schema = {
         type = "object",
         properties = {
@@ -115,7 +115,7 @@ MCP:AddFunction({
 
 MCP:AddFunction({
     id = "bot_remove",
-    description = "Remove (kick) bots from the server. Set `all` to remove every bot, or target exactly one with `name`/`userid`/`entindex`. Only ever kicks bots -- a selector resolving to a human or the host is refused. Waits for the disconnect to settle, then returns the bots removed and the remaining bot count. Server realm.",
+    description = "Remove (kick) bots from the server. Set `all` to remove every bot, or target exactly one with `name`/`userid`/`entindex`. Only ever kicks bots -- a selector resolving to a human or the host is refused. Waits for the disconnect to settle, then returns the bots removed and the remaining bot count.",
     schema = {
         type = "object",
         properties = {

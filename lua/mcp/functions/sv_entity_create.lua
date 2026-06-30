@@ -38,7 +38,7 @@ end
 
 MCP:AddFunction({
     id = "entity_create",
-    description = "Spawn one entity server-side -- Create, SetModel, SetPos, Spawn, Activate -- optionally frozen and coloured, and tagged for later cleanup by entity_remove. The create-half of the entity family (entity_state reads one, entity_find locates many, entity_set mutates, entity_remove deletes). Defaults to a frozen prop_physics so it stays exactly where placed; pass frozen:false to let it obey gravity immediately. prop_* classes require a `model`, validated against mounted game content before spawning, with a post-spawn physics check that rejects (and removes) a model that loads no physics object. Returns the new entity's index, class, resting pose and mass -- drill in with entity_state or reposition with entity_set. Server realm.",
+    description = "Spawn one entity server-side -- Create, SetModel, SetPos, Spawn, Activate -- optionally frozen and coloured, and tagged for later cleanup by entity_remove. The create-half of the entity family (entity_state reads one, entity_find locates many, entity_set mutates, entity_remove deletes). Defaults to a frozen prop_physics so it stays exactly where placed; pass frozen:false to let it obey gravity immediately. prop_* classes require a `model`, validated against mounted game content before spawning, with a post-spawn physics check that rejects (and removes) a model that loads no physics object. Returns the new entity's index, class, resting pose and mass -- drill in with entity_state or reposition with entity_set.",
     schema = {
         type = "object",
         properties = {
