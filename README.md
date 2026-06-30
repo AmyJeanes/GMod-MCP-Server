@@ -82,6 +82,10 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `lua_run_cl` | client | `unsafe` | Compile and execute Lua source in this realm. |
 | `lua_run_sv` | server | `unsafe` | Compile and execute Lua source in this realm. |
 | `player_set_sv` | server | — | Set a player or bot's pose and movement state, then wait for it to settle and confirm it stuck. |
+| `player_state_cl` | client | — | Structured snapshot of a player (or all players) -- identity, vitals, eye position/aim, velocity, movement state (movetype, on_ground, crouching, ducking, water_level), view offset and collision hull, model/animation sequence, and active weapon, in one read. |
+| `player_state_sv` | server | — | Structured snapshot of a player (or all players) -- identity, vitals, eye position/aim, velocity, movement state (movetype, on_ground, crouching, ducking, water_level), view offset and collision hull, model/animation sequence, and active weapon, in one read. |
+| `player_trace_cl` | client | — | Raycast from a player's eyes along their view and report what they're looking at -- the hit entity (index and class; drill in with entity_state), hit position, distance from the eye, surface normal, and surface material/texture. |
+| `player_trace_sv` | server | — | Raycast from a player's eyes along their view and report what they're looking at -- the hit entity (index and class; drill in with entity_state), hit position, distance from the eye, surface normal, and surface material/texture. |
 | `player_walk_cl` | client | — | Walk the local (host) player naturally by driving the real movement code (CUserCmd each tick) via CreateMove, so grounded-locomotion bugs reproduce -- unlike teleport or `+forward`. |
 | `player_walk_sv` | server | — | Walk a target player or bot naturally by driving its CUserCmd each tick via StartCommand -- the canonical way to control bots. |
 | `screenshot_cl` | client | — | Capture a JPEG screenshot. |
