@@ -64,6 +64,8 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `console_cmd_sv` | server | `unsafe` | Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). |
 | `console_read_cl` | client | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
 | `console_read_sv` | server | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
+| `entity_state_cl` | client | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render, collision, bounds, hierarchy, physics and health in a single read. |
+| `entity_state_sv` | server | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render, collision, bounds, hierarchy, physics and health in a single read. |
 | `lua_run_cl` | client | `unsafe` | Compile and execute Lua source in this realm. |
 | `lua_run_sv` | server | `unsafe` | Compile and execute Lua source in this realm. |
 | `player_set_sv` | server | — | Set a player or bot's pose and movement state, then wait for it to settle and confirm it stuck. |
