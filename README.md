@@ -64,6 +64,7 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `console_cmd_sv` | server | `unsafe` | Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). |
 | `console_read_cl` | client | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
 | `console_read_sv` | server | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
+| `entity_create_sv` | server | — | Spawn one entity server-side -- Create, SetModel, SetPos, Spawn, Activate -- optionally frozen and coloured, and tagged for later cleanup by entity_remove. |
 | `entity_find_cl` | client | — | Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. |
 | `entity_find_sv` | server | — | Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. |
 | `entity_state_cl` | client | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render, collision, bounds, hierarchy, physics and health in a single read. |
