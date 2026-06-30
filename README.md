@@ -90,6 +90,8 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `player_trace_sv` | server | — | Raycast from a player's eyes along their view and report what they're looking at -- the hit entity (index and class; drill in with entity_state), hit position, distance from the eye, surface normal, and surface material/texture. |
 | `player_walk_cl` | client | — | Walk the local (host) player naturally by driving the real movement code (CUserCmd each tick) via CreateMove, so grounded-locomotion bugs reproduce -- unlike teleport or `+forward`. |
 | `player_walk_sv` | server | — | Walk a target player or bot naturally by driving its CUserCmd each tick via StartCommand -- the canonical way to control bots. |
+| `reload_file_cl` | client | — | Hot-reload one on-disk Lua source file by re-running it in this realm -- a targeted alternative to mcp_reload (which rebuilds the whole MCP addon) and the engine's autorefresh (which only fires for some edits), for iterating on a single file in any addon. |
+| `reload_file_sv` | server | — | Hot-reload one on-disk Lua source file by re-running it in this realm -- a targeted alternative to mcp_reload (which rebuilds the whole MCP addon) and the engine's autorefresh (which only fires for some edits), for iterating on a single file in any addon. |
 | `screenshot_cl` | client | — | Capture a JPEG screenshot. |
 <!-- TOOLS:GAME:END -->
 
