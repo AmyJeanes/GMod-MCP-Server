@@ -33,33 +33,8 @@ local function parseAngles(t)
     return Angle(p, y, r)
 end
 
--- color: [r,g,b] or [r,g,b,a], each 0-255 (clamped). Returns a Color, or nil + reason.
-local function parseColor(t)
-    if type(t) ~= "table" then return nil, "must be [r,g,b] or [r,g,b,a]" end
-    local r, g, b = tonumber(t[1] or t.r), tonumber(t[2] or t.g), tonumber(t[3] or t.b)
-    local a = tonumber(t[4] or t.a) or 255
-    if not (r and g and b) then return nil, "must be [r,g,b] or [r,g,b,a]" end
-    local function clamp(n) return math.Clamp(math.floor(n), 0, 255) end
-    return Color(clamp(r), clamp(g), clamp(b), clamp(a))
-end
-
--- The freeze primitive: the GetPhysicsObject + IsValid + EnableMotion triad that
--- recurs across the addons. Returns whether the entity had a valid physics object to
--- act on (so the caller can report the real frozen state, not the requested one).
-local function setFrozen(ent, frozen)
-    local phys = ent:GetPhysicsObject()
-    if not IsValid(phys) then return false end
-    phys:EnableMotion(not frozen)
-    if frozen then phys:Sleep() else phys:Wake() end
-    return true
-end
-
-local function setColor(ent, col)
-    ent:SetColor(col)
-    -- An alpha below 255 only shows through under a render mode that respects it;
-    -- otherwise the entity draws fully opaque regardless of the colour's alpha.
-    ent:SetRenderMode(col.a < 255 and RENDERMODE_TRANSALPHA or RENDERMODE_NORMAL)
-end
+-- Colour parsing/clamping and the freeze/colour-apply primitives are shared with
+-- entity_set via MCP.entity (lua/mcp/libraries/libraries/sv_entity.lua).
 
 MCP:AddFunction({
     id = "entity_create",
@@ -118,7 +93,7 @@ MCP:AddFunction({
 
         local col
         if args.color ~= nil then
-            local c, cerr = parseColor(args.color)
+            local c, cerr = MCP.entity.ParseColor(args.color)
             if not c then return { ok = false, error = "`color` " .. cerr } end
             col = c
         end
@@ -161,8 +136,8 @@ MCP:AddFunction({
         end
 
         local frozen = args.frozen ~= false -- default true
-        local hasPhys = setFrozen(ent, frozen)
-        if col then setColor(ent, col) end
+        local hasPhys = MCP.entity.SetFrozen(ent, frozen)
+        if col then MCP.entity.ApplyColor(ent, col) end
 
         -- Cleanup tag (contract with entity_remove): mark every spawned entity, plus an
         -- optional named tag for selective removal.
