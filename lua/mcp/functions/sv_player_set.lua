@@ -73,68 +73,9 @@ local function inSolid(ply, pos)
     return tr.StartSolid == true or tr.AllSolid == true
 end
 
--- Resolve the target from exactly one of host/bot/name/userid/entindex.
-local function resolveTarget(args)
-    local sel = {}
-    if args.host then sel[#sel + 1] = "host" end
-    if args.bot then sel[#sel + 1] = "bot" end
-    if args.name ~= nil then sel[#sel + 1] = "name" end
-    if args.userid ~= nil then sel[#sel + 1] = "userid" end
-    if args.entindex ~= nil then sel[#sel + 1] = "entindex" end
-    if #sel == 0 then return nil, "specify exactly one target: host, bot, name, userid, or entindex" end
-    if #sel > 1 then return nil, "specify exactly one target, got: " .. table.concat(sel, ", ") end
-
-    if args.host then
-        for _, p in ipairs(player.GetAll()) do
-            if p:IsListenServerHost() then return p end
-        end
-        return nil, "no listen-server host player found (dedicated server has none -- target by name/userid)"
-    end
-
-    if args.bot then
-        local bots = player.GetBots()
-        if #bots == 0 then return nil, "no bots on the server -- spawn one first" end
-        if #bots > 1 then
-            local names = {}
-            for _, p in ipairs(bots) do names[#names + 1] = p:Nick() end
-            return nil, "more than one bot; pick with name/userid: " .. table.concat(names, ", ")
-        end
-        return bots[1]
-    end
-
-    if args.name ~= nil then
-        local want = tostring(args.name)
-        for _, p in ipairs(player.GetAll()) do
-            if p:Nick() == want then return p end
-        end
-        local lw = string.lower(want)
-        local matches = {}
-        for _, p in ipairs(player.GetAll()) do
-            if string.find(string.lower(p:Nick()), lw, 1, true) then matches[#matches + 1] = p end
-        end
-        if #matches == 0 then return nil, "no player whose name matches '" .. want .. "'" end
-        if #matches > 1 then
-            local names = {}
-            for _, p in ipairs(matches) do names[#names + 1] = p:Nick() end
-            return nil, "'" .. want .. "' matches several players: " .. table.concat(names, ", ")
-        end
-        return matches[1]
-    end
-
-    if args.userid ~= nil then
-        local uid = tonumber(args.userid)
-        if not uid then return nil, "`userid` must be a number" end
-        local p = Player(uid)
-        if not IsValid(p) then return nil, "no player with userid " .. tostring(uid) end
-        return p
-    end
-
-    local idx = tonumber(args.entindex)
-    if not idx then return nil, "`entindex` must be a number" end
-    local e = Entity(idx)
-    if not IsValid(e) or not e:IsPlayer() then return nil, "entity " .. tostring(idx) .. " is not a valid player" end
-    return e
-end
+-- Target resolution (exactly one of host/bot/name/userid/entindex) is shared with the rest
+-- of the player_* family via MCP.player.Resolve; allow_all=false since player_set acts on
+-- one player.
 
 MCP:AddFunction({
     id = "player_set",
@@ -199,8 +140,9 @@ MCP:AddFunction({
     handler = function(args, ctx)
         args = args or {}
 
-        local ply, terr = resolveTarget(args)
-        if not ply then return { ok = false, error = terr } end
+        local list, terr = MCP.player.Resolve(args, { allow_all = false })
+        if not list then return { ok = false, error = terr } end
+        local ply = list[1] --[[@as Player]]
         if not ply:Alive() then return { ok = false, error = "target '" .. ply:Nick() .. "' is dead; placement needs a live player" } end
         if ply:InVehicle() then return { ok = false, error = "target '" .. ply:Nick() .. "' is in a vehicle; exit it first" } end
 

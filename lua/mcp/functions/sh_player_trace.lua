@@ -8,17 +8,8 @@
 local TRACE_DISTANCE = 16384 -- default ray length: Source's canonical MAX_TRACE_LENGTH
 local MAX_DISTANCE = 100000
 
--- Decode MatType (a byte) to its MAT_* constant name, lazily (generator-safe). MAT_*
--- enums are global numbers; "MAT_" excludes the "MATERIAL_" prefix (4th char differs).
-local matMap
-local function ensureMatMap()
-    if matMap then return matMap end
-    matMap = {}
-    for k, v in pairs(_G) do
-        if isnumber(v) and string.sub(k, 1, 4) == "MAT_" then matMap[v] = k end
-    end
-    return matMap
-end
+-- tr.MatType is a byte; MCP.util.DecodeEnum("MAT_", ...) maps it to its MAT_* constant name
+-- ("MAT_" excludes the "MATERIAL_" prefix -- 4th char differs).
 
 local function traceFrom(ply, dist)
     local eye = ply:EyePos()
@@ -56,7 +47,7 @@ local function traceFrom(ply, dist)
     end
 
     if isstring(tr.HitTexture) and tr.HitTexture ~= "" then r.surface = tr.HitTexture end
-    if isnumber(tr.MatType) then r.material_type = ensureMatMap()[tr.MatType] or tr.MatType end
+    if isnumber(tr.MatType) then r.material_type = MCP.util.DecodeEnum("MAT_", tr.MatType) end
 
     return r
 end

@@ -91,6 +91,44 @@ function MCP.util.Serialize(value, opts)
     return serializeValue(value, {}, state, 1)
 end
 
+-- Feature-test + pcall a getter on `obj`: not every method exists on every object or in
+-- every realm, and some return *nothing* (not nil). Returns a closure (method, ...) ->
+-- value, or nil on absence/error/no-return so the caller just omits the field. The shared
+-- read-tool primitive (entity_state, player_state, cvar_state) -- erases the
+-- IsValid(e) and e:Foo() guard boilerplate that was the corpus's #1 error source.
+function MCP.util.Getter(obj)
+    return function(method, ...)
+        local fn = obj[method]
+        if not isfunction(fn) then return nil end
+        local ok, res = pcall(fn, obj, ...)
+        if not ok then return nil end
+        return res
+    end
+end
+
+-- Map every _G constant named "<prefix>*" that holds a number to {[value] = name}, so an
+-- engine enum decodes to its readable constant ("MOVETYPE_NONE" not 11). Built lazily and
+-- memoized per prefix -- NOT at file-load, so a tool's registration stays bare for the
+-- headless tool-list generator (the scan touches _G/isnumber, in-game-only globals).
+local enumCache = {}
+function MCP.util.EnumMap(prefix)
+    local cached = enumCache[prefix]
+    if cached then return cached end
+    local m = {}
+    for k, v in pairs(_G) do
+        if isnumber(v) and string.sub(k, 1, #prefix) == prefix then m[v] = k end
+    end
+    enumCache[prefix] = m
+    return m
+end
+
+-- Decode an enum int to its "<prefix>*" constant name, falling back to the raw value for an
+-- unknown one. nil passes through (an absent field stays absent).
+function MCP.util.DecodeEnum(prefix, v)
+    if v == nil then return nil end
+    return MCP.util.EnumMap(prefix)[v] or v
+end
+
 -- Validates a request/response id is safe to use as a filename component.
 -- Allows alphanumerics, underscore, hyphen, and period.
 function MCP.util.IsSafeId(id)

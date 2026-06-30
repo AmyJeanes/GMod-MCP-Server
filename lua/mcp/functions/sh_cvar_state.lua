@@ -28,17 +28,6 @@ local function decodeFlags(flags)
     return out
 end
 
--- Feature-test + pcall a getter; nil on absence/error so the field is just omitted.
-local function makeGetter(obj)
-    return function(method)
-        local fn = obj[method]
-        if not isfunction(fn) then return nil end
-        local ok, res = pcall(fn, obj)
-        if not ok then return nil end
-        return res
-    end
-end
-
 MCP:AddFunction({
     id = "cvar_state",
     description = "Structured snapshot of one console variable -- its current value (as string/int/float/bool), default, decoded FCVAR_* flags, help text and min/max bounds, in a single read. The read-half of the cvar pair (cvar_set writes). Nil-safe: an unregistered name returns exists=false rather than erroring. Realm-aware -- GetConVar reads in this realm, so a replicated server convar's value is visible on the client but a client-only convar isn't on the server; query the realm you care about. Read-only. Runs in both realms.",
@@ -64,7 +53,7 @@ MCP:AddFunction({
             return { ok = true, realm = MCP.util.RealmName(), name = name, exists = false }
         end
 
-        local get = makeGetter(cv)
+        local get = MCP.util.Getter(cv)
         local r = {
             ok = true,
             realm = MCP.util.RealmName(),

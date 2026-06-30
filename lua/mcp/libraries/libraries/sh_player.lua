@@ -18,27 +18,47 @@ end
 
 -- Resolve the subject(s) from exactly one of host/bot/name/userid/entindex/all. Returns
 -- (list, err): a single-element list for the singular selectors, the full player list for
--- `all`. With opts.default_host, no selector falls back to the host (the common "me" case
--- for a read tool) instead of erroring. err is set (list nil) on >1 selector or a miss.
+-- `all`. err is set (list nil) on >1 selector, a disallowed selector, or a miss.
+-- opts: default_host (no selector -> host, the "me" case for a read tool); allow_all and
+-- allow_host (default true) -- the write tools that resolve exactly one player pass
+-- allow_all=false (player_set/player_walk), and player_walk also allow_host=false (it has
+-- no host shortcut, only entindex/name with a warning). Messages name only the permitted set.
 function MCP.player.Resolve(args, opts)
     args = args or {}
     opts = opts or {}
+    local allowAll = opts.allow_all ~= false
+    local allowHost = opts.allow_host ~= false
+
+    local permitted = {}
+    if allowHost then permitted[#permitted + 1] = "host" end
+    permitted[#permitted + 1] = "bot"
+    permitted[#permitted + 1] = "name"
+    permitted[#permitted + 1] = "userid"
+    permitted[#permitted + 1] = "entindex"
+    if allowAll then permitted[#permitted + 1] = "all" end
+    local permittedStr = table.concat(permitted, ", ")
 
     local sel = {}
-    if args.host then sel[#sel + 1] = "host" end
+    if args.host then
+        if not allowHost then return nil, "`host` is not a valid subject here; use one of: " .. permittedStr end
+        sel[#sel + 1] = "host"
+    end
     if args.bot then sel[#sel + 1] = "bot" end
     if args.name ~= nil then sel[#sel + 1] = "name" end
     if args.userid ~= nil then sel[#sel + 1] = "userid" end
     if args.entindex ~= nil then sel[#sel + 1] = "entindex" end
-    if args.all then sel[#sel + 1] = "all" end
+    if args.all then
+        if not allowAll then return nil, "`all` is not a valid subject here; use one of: " .. permittedStr end
+        sel[#sel + 1] = "all"
+    end
 
     if #sel > 1 then return nil, "specify exactly one subject, got: " .. table.concat(sel, ", ") end
     if #sel == 0 then
         if not opts.default_host then
-            return nil, "specify exactly one subject: host, bot, name, userid, entindex, or all"
+            return nil, "specify exactly one subject: " .. permittedStr
         end
         local h = findHost()
-        if not h then return nil, "no listen-server host player found; specify bot/name/userid/entindex/all" end
+        if not h then return nil, "no listen-server host player found; specify " .. permittedStr end
         return { h }
     end
 

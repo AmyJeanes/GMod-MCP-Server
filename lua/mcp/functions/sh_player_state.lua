@@ -6,42 +6,11 @@
 -- no selector defaults to the host. Both realms (_sv server state, _cl client prediction --
 -- they legitimately differ for the local player). Read-only/ungated.
 
--- Decode enum ints to constant names, lazily on first use (not at file-load) so registration
--- stays bare for the headless tool-list generator. Mirrors entity_state's ensureEnumMaps.
-local enumMaps
-local function ensureEnumMaps()
-    if enumMaps then return enumMaps end
-    local function build(prefix)
-        local m = {}
-        for k, v in pairs(_G) do
-            if isnumber(v) and string.sub(k, 1, #prefix) == prefix then m[v] = k end
-        end
-        return m
-    end
-    enumMaps = { movetype = build("MOVETYPE_") }
-    return enumMaps
-end
-
-local function decode(map, v)
-    if v == nil then return nil end
-    return map[v] or v
-end
-
--- Feature-test + pcall a getter: not every method exists in every realm (some weapon/ammo
--- reads are server-authoritative), and some return nothing. nil on absence/error/no-return.
-local function makeGetter(obj)
-    return function(method, ...)
-        local fn = obj[method]
-        if not isfunction(fn) then return nil end
-        local ok, res = pcall(fn, obj, ...)
-        if not ok then return nil end
-        return res
-    end
-end
+-- MCP.util.Getter (pcall getter factory) and MCP.util.DecodeEnum (lazy enum decode) are the
+-- shared read-tool primitives; both are define-only/lazy so registration stays generator-safe.
 
 local function snapshot(ply)
-    local get = makeGetter(ply)
-    local maps = ensureEnumMaps()
+    local get = MCP.util.Getter(ply)
     local eyeAng = ply:EyeAngles()
     local vel = ply:GetVelocity()
 
@@ -70,7 +39,7 @@ local function snapshot(ply)
         speed = vel:Length(),
 
         -- movement state
-        movetype = decode(maps.movetype, get("GetMoveType")),
+        movetype = MCP.util.DecodeEnum("MOVETYPE_", get("GetMoveType")),
         on_ground = get("OnGround"),
         crouching = get("Crouching"),
         ducking = ply:IsFlagSet(FL_DUCKING --[[@as FL]]),
@@ -95,7 +64,7 @@ local function snapshot(ply)
 
     local wep = ply:GetActiveWeapon()
     if IsValid(wep) then
-        local wget = makeGetter(wep)
+        local wget = MCP.util.Getter(wep)
         local aw = { class = wep:GetClass() }
         local c1, c2 = wget("Clip1"), wget("Clip2")
         if isnumber(c1) and c1 >= 0 then aw.clip1 = c1 end

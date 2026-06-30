@@ -7,48 +7,8 @@
 -- reads server state, _cl client state -- they legitimately differ for dormant or
 -- not-yet-networked entities. Ungated (structured read).
 
--- Decode enum ints to their constant names so the dump is self-explaining
--- (movetype "MOVETYPE_NONE" reads better than 11). Maps are built lazily on first
--- use, not at file load -- the headless tool-list generator runs this file's
--- registration under a minimal stub env without isnumber/the enum globals, and
--- only handlers (which run solely in-game) should touch them. Falls back to the
--- raw int for an unknown value.
-local enumMaps
-local function ensureEnumMaps()
-    if enumMaps then return enumMaps end
-    local function build(prefix)
-        local m = {}
-        for k, v in pairs(_G) do
-            if isnumber(v) and string.sub(k, 1, #prefix) == prefix then m[v] = k end
-        end
-        return m
-    end
-    enumMaps = {
-        movetype = build("MOVETYPE_"),
-        solid = build("SOLID_"),
-        cgroup = build("COLLISION_GROUP_"),
-    }
-    return enumMaps
-end
-
-local function decode(map, v)
-    if v == nil then return nil end
-    return map[v] or v
-end
-
--- Feature-test + pcall a getter: not every method exists on every entity or in
--- every realm (GetModelRenderBounds is nil server-side; a NULL physobj throws),
--- and some getters return *nothing* (not nil), which crashes naive serialization.
--- nil on absence/error/no-return -- the caller just omits the field.
-local function makeGetter(obj)
-    return function(method, ...)
-        local fn = obj[method]
-        if not isfunction(fn) then return nil end
-        local ok, res = pcall(fn, obj, ...)
-        if not ok then return nil end
-        return res
-    end
-end
+-- Enum decode (MCP.util.DecodeEnum) and the pcall getter factory (MCP.util.Getter) are
+-- shared read-tool primitives -- both lazy/define-only so registration stays generator-safe.
 
 MCP:AddFunction({
     id = "entity_state",
@@ -82,8 +42,7 @@ MCP:AddFunction({
             return { ok = true, index = idx, valid = false }
         end
 
-        local get = makeGetter(ent)
-        local maps = ensureEnumMaps()
+        local get = MCP.util.Getter(ent)
         local r = {
             ok = true,
             index = idx,
@@ -107,9 +66,9 @@ MCP:AddFunction({
             nodraw = get("GetNoDraw"),
             dormant = get("IsDormant"),
 
-            movetype = decode(maps.movetype, get("GetMoveType")),
-            solid = decode(maps.solid, get("GetSolid")),
-            collision_group = decode(maps.cgroup, get("GetCollisionGroup")),
+            movetype = MCP.util.DecodeEnum("MOVETYPE_", get("GetMoveType")),
+            solid = MCP.util.DecodeEnum("SOLID_", get("GetSolid")),
+            collision_group = MCP.util.DecodeEnum("COLLISION_GROUP_", get("GetCollisionGroup")),
 
             bounds = {
                 obb_mins = get("OBBMins"),
@@ -144,7 +103,7 @@ MCP:AddFunction({
         -- phys pos/angles differ from the entity's for keyframed/shadow objects.
         local phys = get("GetPhysicsObject")
         if IsValid(phys) then
-            local pget = makeGetter(phys)
+            local pget = MCP.util.Getter(phys)
             r.physics = {
                 valid = true,
                 mass = pget("GetMass"),
