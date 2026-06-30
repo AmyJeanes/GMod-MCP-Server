@@ -79,6 +79,8 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `entity_set_sv` | server | — | Mutate one entity's transform, render and physics state by index, then confirm. |
 | `entity_state_cl` | client | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render, collision, bounds, hierarchy, physics and health in a single read. |
 | `entity_state_sv` | server | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render, collision, bounds, hierarchy, physics and health in a single read. |
+| `game_set_sv` | server | — | Set one or more curated, safe server-tuning knobs, wait for them to settle, and report the actual values. |
+| `game_state_sv` | server | — | Structured snapshot of server-wide game state in one read -- current map, gamemode, hostname, singleplayer/dedicated flags, max player slots, player/bot/human counts, a lean roster of every player (name/userid/entindex/is_bot/is_host/team -- drill into one with player_state or entity_state), and a `tuning` block with the live values of game_set's knobs (gravity, timescale, phys_timescale, fakelag). |
 | `lua_run_cl` | client | `unsafe` | Compile and execute Lua source in this realm. |
 | `lua_run_sv` | server | `unsafe` | Compile and execute Lua source in this realm. |
 | `player_set_sv` | server | — | Set a player or bot's pose and movement state, then wait for it to settle and confirm it stuck. |
