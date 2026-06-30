@@ -116,7 +116,7 @@ MCP:AddFunction({
                 }
                 if item.raw ~= item.value then res.clamped_from = item.raw end
                 if item.def.cheat and not res.took then
-                    res.note = "cheat-protected; set sv_cheats 1 to allow (sv_cheats left unchanged)"
+                    res.note = "cheat-protected; needs sv_cheats 1, which is blocklisted from Lua -- enable it in the in-game console (sv_cheats left unchanged)"
                 end
                 knobs[name] = res
                 restoreTo[name] = item.before

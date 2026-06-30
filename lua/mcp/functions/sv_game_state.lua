@@ -7,7 +7,7 @@
 
 MCP:AddFunction({
     id = "game_state",
-    description = "Structured snapshot of server-wide game state in one read -- current map, gamemode, hostname, singleplayer/dedicated flags, max player slots, player/bot/human counts, a lean roster of every player (name/userid/entindex/is_bot/is_host/team -- drill into one with player_state or entity_state), and a `tuning` block with the live values of game_set's knobs (gravity, timescale, phys_timescale, fakelag). The read-half paired with game_set (which writes those knobs). Server realm. Read-only.",
+    description = "Structured snapshot of server-wide game state in one read -- current map, gamemode, hostname, singleplayer/dedicated flags, max player slots, player/bot/human counts, a lean roster of every player (name/userid/entindex/is_bot/is_host/team -- drill into one with player_state or entity_state), a `tuning` block with the live values of game_set's knobs (gravity, timescale, phys_timescale, fakelag), and `cheats_enabled` (sv_cheats) -- which gates whether game_set's timescale/fakelag will take. `cheats_enabled` is read-only here AND everywhere: sv_cheats is blocklisted from Lua, so it can only be toggled in the in-game console, never via the bridge. The read-half paired with game_set (which writes the tuning knobs). Server realm. Read-only.",
     schema = {
         type = "object",
         properties = {},
@@ -28,6 +28,7 @@ MCP:AddFunction({
         end
 
         local hostnameCv = GetConVar("hostname")
+        local cheatsCv = GetConVar("sv_cheats")
 
         return {
             ok = true,
@@ -38,6 +39,7 @@ MCP:AddFunction({
             singleplayer = game.SinglePlayer(),
             dedicated = game.IsDedicated(),
             maxplayers = game.MaxPlayers(),
+            cheats_enabled = cheatsCv and cheatsCv:GetBool() or false,
             player_count = #all,
             bot_count = #player.GetBots(),
             human_count = #player.GetHumans(),
