@@ -68,6 +68,7 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `entity_find_cl` | client | — | Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. |
 | `entity_find_sv` | server | — | Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. |
 | `entity_remove_sv` | server | — | Remove entities server-side and wait until they are actually gone before reporting (:Remove is deferred, so a same-call count would be stale). |
+| `entity_set_sv` | server | — | Mutate one entity's transform, render and physics state by index, then confirm. |
 | `entity_state_cl` | client | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render, collision, bounds, hierarchy, physics and health in a single read. |
 | `entity_state_sv` | server | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render, collision, bounds, hierarchy, physics and health in a single read. |
 | `lua_run_cl` | client | `unsafe` | Compile and execute Lua source in this realm. |
