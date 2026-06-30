@@ -64,6 +64,10 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `console_cmd_sv` | server | `unsafe` | Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). |
 | `console_read_cl` | client | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
 | `console_read_sv` | server | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
+| `debug_clear_cl` | client | — | Remove every hook the debug_* tools installed in this realm -- debug_record sampling hooks and (later) debug_draw render hooks, all under the `mcp_debug_` id namespace. |
+| `debug_clear_sv` | server | — | Remove every hook the debug_* tools installed in this realm -- debug_record sampling hooks and (later) debug_draw render hooks, all under the `mcp_debug_` id namespace. |
+| `debug_record_cl` | client | `unsafe` | Record a value each time a hook fires, for a bounded window, then return the time series -- a managed sampling probe that owns the hook lifecycle (unique namespaced hook, duration cap, auto-remove on end/stop/error) so you never hand-roll hook.Add/poll/hook.Remove. |
+| `debug_record_sv` | server | `unsafe` | Record a value each time a hook fires, for a bounded window, then return the time series -- a managed sampling probe that owns the hook lifecycle (unique namespaced hook, duration cap, auto-remove on end/stop/error) so you never hand-roll hook.Add/poll/hook.Remove. |
 | `entity_create_sv` | server | — | Spawn one entity server-side -- Create, SetModel, SetPos, Spawn, Activate -- optionally frozen and coloured, and tagged for later cleanup by entity_remove. |
 | `entity_find_cl` | client | — | Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. |
 | `entity_find_sv` | server | — | Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. |
