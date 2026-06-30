@@ -52,13 +52,13 @@ local function serializeValue(v, seen, state, depth)
     end
 
     if istable(v) then
-        if depth > SERIALIZE_MAX_DEPTH then return "<truncated: too deep>" end
+        if depth > state.maxDepth then return "<truncated: too deep>" end
         if seen[v] then return "<cycle>" end
         seen[v] = true
         local out = {}
         for k, val in pairs(v) do
             state.nodes = state.nodes + 1
-            if state.nodes > SERIALIZE_MAX_NODES then
+            if state.nodes > state.maxNodes then
                 out.__truncated = "serialization size cap reached"
                 break
             end
@@ -77,8 +77,18 @@ local function serializeValue(v, seen, state, depth)
     return tostring(v)
 end
 
-function MCP.util.Serialize(value)
-    return serializeValue(value, {}, { nodes = 0 }, 1)
+-- opts (optional): { max_depth, max_nodes } override the defaults so a caller
+-- embedding a potentially-huge sub-structure (e.g. entity_state's GetTable dump,
+-- where a TARDIS .metadata def can be enormous) can cap it tighter than the
+-- whole-response budget and never crowd out the rest of the response.
+function MCP.util.Serialize(value, opts)
+    opts = opts or {}
+    local state = {
+        nodes = 0,
+        maxDepth = tonumber(opts.max_depth) or SERIALIZE_MAX_DEPTH,
+        maxNodes = tonumber(opts.max_nodes) or SERIALIZE_MAX_NODES,
+    }
+    return serializeValue(value, {}, state, 1)
 end
 
 -- Validates a request/response id is safe to use as a filename component.
