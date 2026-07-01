@@ -58,8 +58,8 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 <!-- TOOLS:GAME:START -->
 | Tool | Realm | Requires | Description |
 | --- | --- | --- | --- |
-| `bot_remove_sv` | server | — | Remove (kick) bots from the server. |
-| `bot_spawn_sv` | server | — | Spawn one or more bots on the server (needs a listen server -- maxplayers>1). |
+| `bot_remove_sv` | server | `world_control` | Remove (kick) bots from the server. |
+| `bot_spawn_sv` | server | `world_control` | Spawn one or more bots on the server (needs a listen server -- maxplayers>1). |
 | `console_cmd_cl` | client | `unsafe` | Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). |
 | `console_cmd_sv` | server | `unsafe` | Run a raw console command in this realm (server: game.ConsoleCommand; client: the local console). |
 | `console_read_cl` | client | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
@@ -73,27 +73,27 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `debug_draw_cl` | client | `unsafe` | Install a persistent client-side render hook that runs your draw Lua every frame, for visual debugging you can then screenshot -- mark an entity, outline a volume, draw a path, label something on the HUD. |
 | `debug_record_cl` | client | `unsafe` | Record a value each time a hook fires, for a bounded window, then return the time series -- a managed sampling probe that owns the hook lifecycle (unique namespaced hook, duration cap, auto-remove on end/stop/error) so you never hand-roll hook.Add/poll/hook.Remove. |
 | `debug_record_sv` | server | `unsafe` | Record a value each time a hook fires, for a bounded window, then return the time series -- a managed sampling probe that owns the hook lifecycle (unique namespaced hook, duration cap, auto-remove on end/stop/error) so you never hand-roll hook.Add/poll/hook.Remove. |
-| `entity_create_sv` | server | — | Spawn one entity server-side -- Create, SetModel, SetPos, Spawn, Activate -- optionally frozen and coloured, and tagged for later cleanup by entity_remove. |
+| `entity_create_sv` | server | `world_control` | Spawn one entity server-side -- Create, SetModel, SetPos, Spawn, Activate -- optionally frozen and coloured, and tagged for later cleanup by entity_remove. |
 | `entity_find_cl` | client | — | Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. |
 | `entity_find_sv` | server | — | Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. |
-| `entity_remove_sv` | server | — | Remove entities server-side and wait until they are actually gone before reporting (:Remove is deferred, so a same-call count would be stale). |
-| `entity_set_sv` | server | — | Mutate one entity's transform, render and physics state by index, then confirm. |
+| `entity_remove_sv` | server | `world_control` | Remove entities server-side and wait until they are actually gone before reporting (:Remove is deferred, so a same-call count would be stale). |
+| `entity_set_sv` | server | `world_control` | Mutate one entity's transform, render and physics state by index, then confirm. |
 | `entity_state_cl` | client | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render (incl. |
 | `entity_state_sv` | server | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render (incl. |
-| `game_set_cl` | client | — | Set curated client-only game knobs, then confirm. |
-| `game_set_sv` | server | — | Set one or more curated, safe server-tuning knobs, wait for them to settle, and report the actual values. |
+| `game_set_cl` | client | `world_control` | Set curated client-only game knobs, then confirm. |
+| `game_set_sv` | server | `world_control` | Set one or more curated, safe server-tuning knobs, wait for them to settle, and report the actual values. |
 | `game_state_sv` | server | — | Structured snapshot of server-wide game state in one read -- current map, gamemode, hostname, singleplayer/dedicated flags, max player slots, player/bot/human counts, a lean roster of every player (name/userid/entindex/is_bot/is_host/team -- drill into one with player_state or entity_state), a `tuning` block with the live values of game_set's knobs (gravity, timescale, phys_timescale, fakelag), and `cheats_enabled` (sv_cheats) -- which gates whether game_set's timescale/fakelag will take. |
 | `lua_run_cl` | client | `unsafe` | Compile and execute Lua source in this realm. |
 | `lua_run_sv` | server | `unsafe` | Compile and execute Lua source in this realm. |
 | `model_info_cl` | client | — | Structured info about a model ASSET without spawning a prop -- read straight from the model file via util.GetModelInfo (no entity, no spawn), so it is synchronous and realm-identical. |
 | `model_info_sv` | server | — | Structured info about a model ASSET without spawning a prop -- read straight from the model file via util.GetModelInfo (no entity, no spawn), so it is synchronous and realm-identical. |
-| `player_set_sv` | server | — | Set a player or bot's pose and state, then wait for it to settle and confirm it stuck. |
+| `player_set_sv` | server | `player_control` | Set a player or bot's pose and state, then wait for it to settle and confirm it stuck. |
 | `player_state_cl` | client | — | Structured snapshot of a player (or all players) -- identity, vitals, eye position/aim, velocity, movement state (movetype, on_ground, crouching, ducking, frozen, godmode, water_level), view offset and collision hull, model/animation sequence, playermodel and weapon colours, and active weapon, in one read. |
 | `player_state_sv` | server | — | Structured snapshot of a player (or all players) -- identity, vitals, eye position/aim, velocity, movement state (movetype, on_ground, crouching, ducking, frozen, godmode, water_level), view offset and collision hull, model/animation sequence, playermodel and weapon colours, and active weapon, in one read. |
 | `player_trace_cl` | client | — | Raycast from a player's eyes along their view and report what they're looking at -- the hit entity (index and class; drill in with entity_state), hit position, distance from the eye, surface normal, and surface material/texture. |
 | `player_trace_sv` | server | — | Raycast from a player's eyes along their view and report what they're looking at -- the hit entity (index and class; drill in with entity_state), hit position, distance from the eye, surface normal, and surface material/texture. |
-| `player_walk_cl` | client | — | Walk the local (host) player naturally by driving the real movement code (CUserCmd each tick) via CreateMove, so grounded-locomotion bugs reproduce -- unlike teleport or `+forward`. |
-| `player_walk_sv` | server | — | Walk a target player or bot naturally by driving its CUserCmd each tick via StartCommand -- the canonical way to control bots. |
+| `player_walk_cl` | client | `player_control` | Walk the local (host) player naturally by driving the real movement code (CUserCmd each tick) via CreateMove, so grounded-locomotion bugs reproduce -- unlike teleport or `+forward`. |
+| `player_walk_sv` | server | `player_control` | Walk a target player or bot naturally by driving its CUserCmd each tick via StartCommand -- the canonical way to control bots. |
 | `reload_file_cl` | client | — | Hot-reload one on-disk Lua source file by re-running it in this realm -- a targeted alternative to mcp_reload (which rebuilds the whole MCP addon) and the engine's autorefresh (which only fires for some edits), for iterating on a single file in any addon. |
 | `reload_file_sv` | server | — | Hot-reload one on-disk Lua source file by re-running it in this realm -- a targeted alternative to mcp_reload (which rebuilds the whole MCP addon) and the engine's autorefresh (which only fires for some edits), for iterating on a single file in any addon. |
 | `screenshot_cl` | client | — | Capture a JPEG screenshot. |
@@ -108,7 +108,9 @@ Security gates a tool can require (`requires = { ... }`). Each derives an archiv
 <!-- TOOLS:CAPS:START -->
 | Capability | ConVar | Default | Description |
 | --- | --- | --- | --- |
+| `player_control` | `mcp_allow_player_control` | off | Player control: let MCP drive and reposition the local player — teleport/pose/health/loadout (player_set) and movement/aim (player_walk). |
 | `unsafe` | `mcp_allow_unsafe` | off | Unsafe: arbitrary code execution via MCP — Lua source (lua_run) and raw console commands (console_cmd). |
+| `world_control` | `mcp_allow_world_control` | off | World control: let MCP mutate world state via structured tools — spawn/remove/modify entities (entity_create/remove/set), curated game knobs (game_set), and test bots (bot_spawn/remove). |
 <!-- TOOLS:CAPS:END -->
 
 ## Console & error capture
