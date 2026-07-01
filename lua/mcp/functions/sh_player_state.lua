@@ -44,15 +44,18 @@ local function snapshot(ply)
         crouching = get("Crouching"),
         ducking = ply:IsFlagSet(FL_DUCKING --[[@as FL]]),
         frozen = ply:IsFlagSet(FL_FROZEN --[[@as FL]]),
+        godmode = ply:IsFlagSet(FL_GODMODE --[[@as FL]]),
         water_level = get("WaterLevel"),
 
         -- view / hull -- the crouch-desync surface
         view_offset = get("GetViewOffset"),
         hull = { mins = ply:OBBMins(), maxs = ply:OBBMaxs() },
 
-        -- model / anim
+        -- model / anim / appearance (colours are normalised 0-1 Vectors, mirroring player_set)
         model = get("GetModel"),
         model_scale = get("GetModelScale"),
+        player_color = get("GetPlayerColor"),
+        weapon_color = get("GetWeaponColor"),
     }
 
     local seq = get("GetSequence")
@@ -82,7 +85,7 @@ end
 
 MCP:AddFunction({
     id = "player_state",
-    description = "Structured snapshot of a player (or all players) -- identity, vitals, eye position/aim, velocity, movement state (movetype, on_ground, crouching, ducking, water_level), view offset and collision hull, model/animation sequence, and active weapon, in one read. The player-specific companion to entity_state (which defers eye/aim/duck/anim/weapon here); use entity_state via the returned entindex for the generic render/physics fields. Subject is exactly one of `host` (the listen/SP host), `bot` (the sole bot), `name`, `userid`, or `entindex` -- or `all` to snapshot every player (returns a `players` array). With no selector it defaults to the host. Runs in both realms: _sv reports authoritative server state, _cl reports the local client's prediction -- they can differ for the local player (e.g. mid-prediction). Read-only.",
+    description = "Structured snapshot of a player (or all players) -- identity, vitals, eye position/aim, velocity, movement state (movetype, on_ground, crouching, ducking, frozen, godmode, water_level), view offset and collision hull, model/animation sequence, playermodel and weapon colours, and active weapon, in one read. The player-specific companion to entity_state (which defers eye/aim/duck/anim/weapon here); use entity_state via the returned entindex for the generic render/physics fields. Subject is exactly one of `host` (the listen/SP host), `bot` (the sole bot), `name`, `userid`, or `entindex` -- or `all` to snapshot every player (returns a `players` array). With no selector it defaults to the host. Runs in both realms: _sv reports authoritative server state, _cl reports the local client's prediction -- they can differ for the local player (e.g. mid-prediction). Read-only.",
     schema = {
         type = "object",
         properties = {
