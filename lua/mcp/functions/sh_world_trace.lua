@@ -18,12 +18,7 @@ end
 -- Resolve a MASK_* constant name to its value; default MASK_SOLID (util.TraceLine's own).
 local function resolveMask(name)
     if name == nil then return MASK_SOLID end
-    if not isstring(name) or string.sub(name, 1, 5) ~= "MASK_" then
-        return nil, "`mask` must be a MASK_* constant name (e.g. MASK_SOLID, MASK_SHOT, MASK_PLAYERSOLID)"
-    end
-    local v = _G[name]
-    if not isnumber(v) then return nil, "unknown mask '" .. name .. "'" end
-    return v
+    return MCP.util.ResolveEnum("MASK_", name)
 end
 
 -- filter is a list of entindices to ignore (or a single index). Dead/invalid indices are
@@ -112,7 +107,7 @@ MCP:AddFunction({
         end
 
         local mask, maskErr = resolveMask(args.mask)
-        if maskErr then return { ok = false, error = maskErr } end
+        if maskErr then return { ok = false, error = "`mask` " .. maskErr } end
 
         local td = {
             start = start,

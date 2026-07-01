@@ -129,17 +129,32 @@ function MCP.util.DecodeEnum(prefix, v)
     return MCP.util.EnumMap(prefix)[v] or v
 end
 
--- List every _G constant named "<prefix>*" that holds a POSITIVE number, as {bit,name}
--- pairs -- the set of single flags for a bitmask (FCVAR_*, CONTENTS_*). The >0 filter drops
--- the zero sentinel (e.g. CONTENTS_EMPTY) that band() can never match. Lazy + memoized per
--- prefix like EnumMap so registration stays generator-safe.
+-- Inverse of DecodeEnum: resolve a "<prefix>*" constant NAME (e.g. "MASK_SHOT",
+-- "COLLISION_GROUP_WORLD") to its numeric value. Returns (value) or (nil, errmsg) -- the
+-- name must carry the prefix and resolve to a number in _G. For turning a caller-supplied
+-- enum name back into the engine constant.
+function MCP.util.ResolveEnum(prefix, name)
+    if not isstring(name) or string.sub(name, 1, #prefix) ~= prefix then
+        return nil, "must be a " .. prefix .. "* constant name"
+    end
+    local v = _G[name]
+    if not isnumber(v) then return nil, "is not a known " .. prefix .. "* constant: '" .. name .. "'" end
+    return v
+end
+
+-- List every _G constant named "<prefix>*" that holds a single-bit (power-of-two) value,
+-- as {bit,name} pairs -- the set of individual flags for a bitmask (FCVAR_*, CONTENTS_*,
+-- FSOLID_*, EF_*). The power-of-two filter (band(v,v-1)==0) drops the zero sentinel (e.g.
+-- CONTENTS_EMPTY) AND non-flag companions like FSOLID_MAX_BITS (a bit *count*, 10), which
+-- would otherwise false-match any mask sharing one of its bits. Lazy + memoized per prefix
+-- like EnumMap so registration stays generator-safe.
 local bitCache = {}
 function MCP.util.BitList(prefix)
     local cached = bitCache[prefix]
     if cached then return cached end
     local list = {}
     for k, v in pairs(_G) do
-        if isnumber(v) and v > 0 and string.sub(k, 1, #prefix) == prefix then
+        if isnumber(v) and v > 0 and bit.band(v, v - 1) == 0 and string.sub(k, 1, #prefix) == prefix then
             list[#list + 1] = { bit = v, name = k }
         end
     end

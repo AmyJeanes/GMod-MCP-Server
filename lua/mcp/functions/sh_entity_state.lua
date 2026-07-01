@@ -12,7 +12,7 @@
 
 MCP:AddFunction({
     id = "entity_state",
-    description = "Nil-safe structured snapshot of one entity by index -- identity, transform, render, collision, bounds, hierarchy, physics and health in a single read. A dead or recycled index returns valid=false instead of erroring (index reuse after respawns is common), and always echoes the index so the caller can confirm the right entity. Set include_table to also dump the entity's Lua table (ent:GetTable(), depth-capped) -- where addon dynamic state such as TARDIS `.data` lives. Pointed at a player this returns only the generic entity fields plus is_player; use player_state for eye/duck/anim/weapon. Locate entities with entity_find. Runs in both realms (_sv server state, _cl client state -- they can differ for dormant/unnetworked entities).",
+    description = "Nil-safe structured snapshot of one entity by index -- identity, transform, render (incl. effects flags), collision (solid + FSOLID flags + collision bounds), OBB bounds, hierarchy (incl. parent-local transform when parented), physics and health in a single read. A dead or recycled index returns valid=false instead of erroring (index reuse after respawns is common), and always echoes the index so the caller can confirm the right entity. Set include_table to also dump the entity's Lua table (ent:GetTable(), depth-capped) -- where addon dynamic state such as TARDIS `.data` lives; include_constraints for welds/ropes/etc. on the entity; include_nw_vars for the generic NW/NW2 networked-var bags (distinct from a SENT's SetupDataTables accessors). Pointed at a player this returns only the generic entity fields plus is_player; use player_state for eye/duck/anim/weapon. Locate entities with entity_find. Runs in both realms (_sv server state, _cl client state -- they can differ for dormant/unnetworked entities).",
     schema = {
         type = "object",
         properties = {
@@ -23,6 +23,14 @@ MCP:AddFunction({
             include_table = {
                 type = "boolean",
                 description = "Also include `entity_table`: a depth-capped dump of the entity's Lua table (ent:GetTable()). Off by default -- it can be large and noisy (functions, merged addon definitions), but it is where addon dynamic state lives (e.g. TARDIS `.data`). Lands nested, not flattened.",
+            },
+            include_constraints = {
+                type = "boolean",
+                description = "Also include `constraints`: the constraints attached to this entity (constraint.GetTable -- welds, ropes, axes, etc.), depth-capped. Off by default.",
+            },
+            include_nw_vars = {
+                type = "boolean",
+                description = "Also include `nw_vars`: the generic networked-var bags (`nw` = GetNWVarTable, `nw2` = GetNW2VarTable), each included only when non-empty. These are the SetNW*/SetNW2* stores, NOT a scripted entity's SetupDataTables accessors (those need the entity's own getters -- see include_table). Off by default.",
             },
         },
         required = { "entindex" },
@@ -79,6 +87,22 @@ MCP:AddFunction({
             health = get("Health"),
         }
 
+        -- effects (EF_* bitmask, e.g. EF_BONEMERGE/EF_NODRAW): only when set, to stay lean.
+        local eff = get("GetEffects")
+        if isnumber(eff) and eff ~= 0 then r.effects = MCP.util.DecodeBits("EF_", eff) end
+        -- solid flags (FSOLID_*): the collision behaviour distinct from the SOLID_ type.
+        local sflags = get("GetSolidFlags")
+        if isnumber(sflags) then
+            local decoded = MCP.util.DecodeBits("FSOLID_", sflags)
+            if decoded and #decoded > 0 then r.solid_flags = decoded end
+        end
+        -- collision bounds (GetCollisionBounds returns min,max) -- the AABB used for
+        -- collision, which can differ from the render OBB above; include only when it does.
+        local okCB, cbMin, cbMax = pcall(ent.GetCollisionBounds, ent)
+        if okCB and isvector(cbMin) and isvector(cbMax) and (cbMin ~= r.bounds.obb_mins or cbMax ~= r.bounds.obb_maxs) then
+            r.collision_bounds = { mins = cbMin, maxs = cbMax }
+        end
+
         -- name: targetname for entities, Nick for players; omit when empty (most props).
         local nm = ent:IsPlayer() and ent:Nick() or get("GetName")
         if nm and nm ~= "" then r.name = nm end
@@ -90,9 +114,13 @@ MCP:AddFunction({
         end
 
         -- parent/owner serialize to {class,index,valid} via the global serializer;
-        -- omit when absent so a NULL doesn't render as a phantom relationship.
+        -- omit when absent so a NULL doesn't render as a phantom relationship. When parented,
+        -- parent_local is the transform relative to the parent (what SetParent preserves).
         local par = get("GetParent")
-        if IsValid(par) then r.parent = par end
+        if IsValid(par) then
+            r.parent = par
+            r.parent_local = { pos = get("GetLocalPos"), angles = get("GetLocalAngles") }
+        end
         local own = get("GetOwner")
         if IsValid(own) then r.owner = own end
         local children = get("GetChildren")
@@ -121,6 +149,26 @@ MCP:AddFunction({
             if okT and istable(tbl) then
                 r.entity_table = MCP.util.Serialize(tbl, { max_depth = 5, max_nodes = 1500 })
             end
+        end
+
+        -- Opt-in constraints (welds/ropes/etc. on this entity) -- can be large, so off by default.
+        if args.include_constraints then
+            local okC, ct = pcall(constraint.GetTable, ent)
+            if okC and istable(ct) then
+                r.constraints = MCP.util.Serialize(ct, { max_depth = 4, max_nodes = 800 })
+            end
+        end
+
+        -- Opt-in networked vars: generic NW/NW2 bags (SetNW*/SetNW2*), distinct from a SENT's
+        -- SetupDataTables accessors (which need the entity's own getters -- see entity_table).
+        -- Both included when non-empty; most props carry neither.
+        if args.include_nw_vars then
+            local nw = {}
+            local legacy = get("GetNWVarTable")
+            if istable(legacy) and next(legacy) ~= nil then nw.nw = MCP.util.Serialize(legacy, { max_depth = 4, max_nodes = 800 }) end
+            local nw2 = get("GetNW2VarTable")
+            if istable(nw2) and next(nw2) ~= nil then nw.nw2 = MCP.util.Serialize(nw2, { max_depth = 4, max_nodes = 800 }) end
+            if next(nw) ~= nil then r.nw_vars = nw end
         end
 
         return r

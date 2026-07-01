@@ -38,7 +38,7 @@ end
 
 MCP:AddFunction({
     id = "entity_create",
-    description = "Spawn one entity server-side -- Create, SetModel, SetPos, Spawn, Activate -- optionally frozen and coloured, and tagged for later cleanup by entity_remove. The create-half of the entity family (entity_state reads one, entity_find locates many, entity_set mutates, entity_remove deletes). Defaults to a frozen prop_physics so it stays exactly where placed; pass frozen:false to let it obey gravity immediately. prop_* classes require a `model`, validated against mounted game content before spawning, with a post-spawn physics check that rejects (and removes) a model that loads no physics object. Returns the new entity's index, class, resting pose and mass -- drill in with entity_state or reposition with entity_set.",
+    description = "Spawn one entity server-side -- Create, SetModel, SetPos, Spawn, Activate -- optionally frozen and coloured, and tagged for later cleanup by entity_remove. The create-half of the entity family (entity_state reads one, entity_find locates many, entity_set mutates, entity_remove deletes). Defaults to a frozen prop_physics so it stays exactly where placed; pass frozen:false to let it obey gravity immediately. prop_* classes require a `model`, validated against mounted game content before spawning, with a post-spawn physics check that rejects (and removes) a model that loads no physics object. `keyvalues` and `parent` are applied BEFORE Spawn (keyvalues are consumed at spawn time; some entities like linked_portal_door break if parented after); `collision_group` and `movetype` after. Returns the new entity's index, class, resting pose and mass -- drill in with entity_state or reposition with entity_set.",
     schema = {
         type = "object",
         properties = {
@@ -65,6 +65,23 @@ MCP:AddFunction({
             color = {
                 type = "array", items = { type = "number" }, minItems = 3, maxItems = 4,
                 description = "Render colour [r, g, b] or [r, g, b, a], each 0-255. An alpha below 255 switches the entity to a translucent render mode.",
+            },
+            collision_group = {
+                type = "string",
+                description = "Collision group to set after spawn, by COLLISION_GROUP_* constant name (e.g. \"COLLISION_GROUP_DEBRIS\", \"COLLISION_GROUP_WEAPON\").",
+            },
+            movetype = {
+                type = "string",
+                description = "Movetype to set after spawn, by MOVETYPE_* constant name (e.g. \"MOVETYPE_NONE\").",
+            },
+            parent = {
+                type = "integer",
+                description = "Entity index to parent the new entity to, applied BEFORE Spawn -- some entities (e.g. linked_portal_door) break their Touch/trigger behaviour if parented after spawning.",
+            },
+            keyvalues = {
+                type = "object",
+                description = "Spawn keyvalues applied via SetKeyValue BEFORE Spawn (entity keyvalues are consumed at spawn time -- setting them afterward is too late). A map of key -> value (values coerced to strings), e.g. {\"targetname\": \"door1\"}.",
+                additionalProperties = { type = { "string", "number", "boolean" } },
             },
             tag = {
                 type = "string",
@@ -113,6 +130,30 @@ MCP:AddFunction({
             return { ok = false, error = "`model` is required for prop classes (" .. class .. ")" }
         end
 
+        local collisionGroup, movetype
+        if args.collision_group ~= nil then
+            local cg, cgErr = MCP.util.ResolveEnum("COLLISION_GROUP_", args.collision_group)
+            if cgErr then return { ok = false, error = "`collision_group` " .. cgErr } end
+            collisionGroup = cg
+        end
+        if args.movetype ~= nil then
+            local mt, mtErr = MCP.util.ResolveEnum("MOVETYPE_", args.movetype)
+            if mtErr then return { ok = false, error = "`movetype` " .. mtErr } end
+            movetype = mt
+        end
+
+        local parentEnt
+        if args.parent ~= nil then
+            local pidx = tonumber(args.parent)
+            if not pidx then return { ok = false, error = "`parent` must be an entity index" } end
+            parentEnt = Entity(math.floor(pidx))
+            if not IsValid(parentEnt) then return { ok = false, error = "`parent` entity " .. tostring(pidx) .. " is not valid" } end
+        end
+
+        if args.keyvalues ~= nil and not istable(args.keyvalues) then
+            return { ok = false, error = "`keyvalues` must be an object of key -> value" }
+        end
+
         local ent = ents.Create(class)
         if not IsValid(ent) then
             return { ok = false, error = "could not create an entity of class '" .. class .. "' (unknown or non-spawnable class)" }
@@ -121,6 +162,12 @@ MCP:AddFunction({
         if model then ent:SetModel(model) end
         ent:SetPos(pos)
         if angles then ent:SetAngles(angles) end
+        -- keyvalues + parent BEFORE Spawn: keyvalues are consumed at spawn time, and some
+        -- entities (e.g. linked_portal_door) break their Touch behaviour if parented after.
+        if args.keyvalues then
+            for k, v in pairs(args.keyvalues) do ent:SetKeyValue(tostring(k), tostring(v)) end
+        end
+        if parentEnt then ent:SetParent(parentEnt) end
         ent:Spawn()
         ent:Activate()
 
@@ -134,6 +181,9 @@ MCP:AddFunction({
             ent:Remove()
             return { ok = false, error = "model '" .. tostring(model) .. "' spawned with no physics object (not a valid physics model)" }
         end
+
+        if collisionGroup ~= nil then ent:SetCollisionGroup(collisionGroup) end
+        if movetype ~= nil then ent:SetMoveType(movetype) end
 
         local frozen = args.frozen ~= false -- default true
         local hasPhys = MCP.entity.SetFrozen(ent, frozen)
@@ -164,6 +214,9 @@ MCP:AddFunction({
         if model then result.model = ent:GetModel() end
         if col then result.color = col end
         if tag then result.tag = tag end
+        if collisionGroup ~= nil then result.collision_group = MCP.util.DecodeEnum("COLLISION_GROUP_", ent:GetCollisionGroup()) end
+        if movetype ~= nil then result.movetype = MCP.util.DecodeEnum("MOVETYPE_", ent:GetMoveType()) end
+        if IsValid(parentEnt) then result.parent = parentEnt:EntIndex() end
         if IsValid(phys) then result.mass = phys:GetMass() end
         return result
     end,

@@ -50,7 +50,7 @@ end
 
 MCP:AddFunction({
     id = "entity_set",
-    description = "Mutate one entity's transform, render and physics state by index, then confirm. The write-half of the entity family (entity_state reads, entity_find locates, entity_create spawns, entity_remove deletes) -- the entity counterpart of player_set. Every arg is optional except `index`; supply any subset (at least one mutation). Transform: `pos` [x,y,z], `angles` [pitch,yaw,roll]. Render: `color` [r,g,b(,a)] (alpha<255 -> translucent render mode), `material` (\"\" clears), `nodraw`, `skin`, `model_scale`. Physics (need a valid physics object -- a requested physics mutation that can't apply is reported in `skipped`, the rest still apply): `frozen` (true = freeze in place / disable motion, false = unfreeze + wake), `velocity` [x,y,z], `mass`, `gravity`. Players are refused -- use player_set for players (it owns pose/holds and keeps prediction consistent). When `pos` is set without a `velocity`, the call waits for the entity to settle and reports where it actually came to rest (settled / moved_after_place / in_solid); a requested velocity means intentional motion, so it returns immediately.",
+    description = "Mutate one entity's transform, render and physics state by index, then confirm. The write-half of the entity family (entity_state reads, entity_find locates, entity_create spawns, entity_remove deletes) -- the entity counterpart of player_set. Every arg is optional except `index`; supply any subset (at least one mutation). Transform: `pos` [x,y,z], `angles` [pitch,yaw,roll]. Render: `color` [r,g,b(,a)] (alpha<255 -> translucent render mode), `material` (\"\" clears), `nodraw`, `skin`, `model_scale`. Collision/hierarchy: `collision_group` (COLLISION_GROUP_* name), `movetype` (MOVETYPE_* name -- use MOVETYPE_NONE to pin an NPC, which ignores physics freeze), `parent` (entindex to parent to, or -1 to unparent). Physics (need a valid physics object -- a requested physics mutation that can't apply is reported in `skipped`, the rest still apply): `frozen` (true = freeze in place / disable motion, false = unfreeze + wake), `velocity` [x,y,z], `mass`, `gravity`, `wake` (force the physics object awake). Players are refused -- use player_set for players (it owns pose/holds and keeps prediction consistent). When `pos` is set without a `velocity`, the call waits for the entity to settle and reports where it actually came to rest (settled / moved_after_place / in_solid); a requested velocity means intentional motion, so it returns immediately.",
     schema = {
         type = "object",
         properties = {
@@ -86,6 +86,18 @@ MCP:AddFunction({
                 type = "number",
                 description = "Set the model render scale (1 = default). Must be greater than 0.",
             },
+            collision_group = {
+                type = "string",
+                description = "Set the collision group by COLLISION_GROUP_* constant name (e.g. \"COLLISION_GROUP_WORLD\", \"COLLISION_GROUP_DEBRIS\", \"COLLISION_GROUP_WEAPON\", \"COLLISION_GROUP_NONE\").",
+            },
+            movetype = {
+                type = "string",
+                description = "Set the movetype by MOVETYPE_* constant name (e.g. \"MOVETYPE_NONE\", \"MOVETYPE_VPHYSICS\", \"MOVETYPE_NOCLIP\"). NPCs ignore physics freeze/EnableMotion, so use MOVETYPE_NONE to pin one in place.",
+            },
+            parent = {
+                type = "integer",
+                description = "Parent this entity to the entity at this index so it follows the parent's movement. Use -1 to clear the parent (unparent). Cannot parent an entity to itself.",
+            },
             frozen = {
                 type = "boolean",
                 description = "true = freeze in place (disable physics motion and sleep); false = unfreeze and wake. Needs a physics object.",
@@ -101,6 +113,10 @@ MCP:AddFunction({
             gravity = {
                 type = "boolean",
                 description = "Enable (true) or disable (false) gravity on the physics object. Needs a physics object.",
+            },
+            wake = {
+                type = "boolean",
+                description = "Wake the physics object (PhysObj:Wake) to force it to re-evaluate -- e.g. to shift a sleep-cached shadow after enabling motion. Needs a physics object; only true acts (false is a no-op).",
             },
         },
         required = { "index" },
@@ -137,12 +153,40 @@ MCP:AddFunction({
             return { ok = false, error = "`model_scale` must be greater than 0" }
         end
 
+        local collisionGroup, movetype
+        if args.collision_group ~= nil then
+            local cg, cgErr = MCP.util.ResolveEnum("COLLISION_GROUP_", args.collision_group)
+            if cgErr then return { ok = false, error = "`collision_group` " .. cgErr } end
+            collisionGroup = cg
+        end
+        if args.movetype ~= nil then
+            local mt, mtErr = MCP.util.ResolveEnum("MOVETYPE_", args.movetype)
+            if mtErr then return { ok = false, error = "`movetype` " .. mtErr } end
+            movetype = mt
+        end
+
+        -- parent: index >=1 to parent, -1 (or any <=0) to unparent.
+        local parentEnt, unparent
+        if args.parent ~= nil then
+            local pidx = tonumber(args.parent)
+            if not pidx then return { ok = false, error = "`parent` must be an entity index, or -1 to unparent" } end
+            if pidx <= 0 then
+                unparent = true
+            elseif math.floor(pidx) == idx then
+                return { ok = false, error = "cannot parent entity " .. idx .. " to itself" }
+            else
+                parentEnt = Entity(math.floor(pidx))
+                if not IsValid(parentEnt) then return { ok = false, error = "`parent` entity " .. tostring(pidx) .. " is not valid" } end
+            end
+        end
+
         local hasAction = pos or angles or col or velocity
             or args.material ~= nil or args.nodraw ~= nil or args.skin ~= nil
             or args.model_scale ~= nil or args.frozen ~= nil or args.mass ~= nil
-            or args.gravity ~= nil
+            or args.gravity ~= nil or collisionGroup ~= nil or movetype ~= nil
+            or args.parent ~= nil or args.wake == true
         if not hasAction then
-            return { ok = false, error = "entity_set needs at least one mutation (pos, angles, color, material, nodraw, skin, model_scale, frozen, velocity, mass, gravity)" }
+            return { ok = false, error = "entity_set needs at least one mutation (pos, angles, color, material, nodraw, skin, model_scale, collision_group, movetype, parent, frozen, velocity, mass, gravity, wake)" }
         end
 
         local startPos = ent:GetPos()
@@ -156,6 +200,10 @@ MCP:AddFunction({
         if args.nodraw ~= nil then ent:SetNoDraw(args.nodraw == true) applied[#applied + 1] = "nodraw" end
         if args.skin ~= nil then ent:SetSkin(math.floor(tonumber(args.skin) or 0)) applied[#applied + 1] = "skin" end
         if args.model_scale ~= nil then ent:SetModelScale(tonumber(args.model_scale), 0) applied[#applied + 1] = "model_scale" end
+        if collisionGroup ~= nil then ent:SetCollisionGroup(collisionGroup) applied[#applied + 1] = "collision_group" end
+        if movetype ~= nil then ent:SetMoveType(movetype) applied[#applied + 1] = "movetype" end
+        if unparent then ent:SetParent() applied[#applied + 1] = "parent"
+        elseif parentEnt then ent:SetParent(parentEnt) applied[#applied + 1] = "parent" end
 
         -- Physics mutations need a valid PhysObj; record requested-but-inapplicable ones.
         local phys = ent:GetPhysicsObject()
@@ -165,6 +213,7 @@ MCP:AddFunction({
         if args.mass ~= nil then physMutate("mass", function() phys:SetMass(math.Clamp(tonumber(args.mass), 0.1, 50000)) end) end
         if args.gravity ~= nil then physMutate("gravity", function() phys:EnableGravity(args.gravity == true) end) end
         if velocity then physMutate("velocity", function() phys:SetVelocity(velocity) phys:Wake() end) end
+        if args.wake == true then physMutate("wake", function() phys:Wake() end) end
         -- frozen last so a freeze wins over a same-call velocity (final state = frozen).
         if args.frozen ~= nil then
             local frozen = args.frozen == true
@@ -182,8 +231,12 @@ MCP:AddFunction({
                 pos = ent:GetPos(),
                 angles = ent:GetAngles(),
                 velocity = ent:GetVelocity(),
+                movetype = MCP.util.DecodeEnum("MOVETYPE_", ent:GetMoveType()),
+                collision_group = MCP.util.DecodeEnum("COLLISION_GROUP_", ent:GetCollisionGroup()),
                 has_physics = IsValid(p),
             }
+            local par = ent:GetParent()
+            r.parent = IsValid(par) and par:EntIndex() or false
             if next(skipped) ~= nil then r.skipped = skipped end
             if IsValid(p) then
                 r.mass = p:GetMass()
