@@ -135,6 +135,7 @@ public class BridgePingerTests
             Assert.That(result.BootstrapPending, Is.Null);
             Assert.That(result.BootstrapError, Is.Null);
             Assert.That(result.HasFocus, Is.Null);
+            Assert.That(result.Capabilities, Is.Null);
         });
     }
 
@@ -185,6 +186,29 @@ public class BridgePingerTests
         var result = await pinger.PingAsync(CancellationToken.None);
 
         Assert.That(result.HasFocus, Is.False);
+    }
+
+    [Test]
+    public async Task PingAsync_DecodesCapabilities()
+    {
+        using var root = new TempBridgeRoot();
+        using var responder = new FakeGmodResponder(root.McpRoot, "server", _ =>
+            new JsonObject
+            {
+                ["ok"] = true,
+                ["capabilities"] = new JsonObject { ["unsafe"] = true, ["world_control"] = false },
+            });
+        using var registry = new FileBridgeRegistry(root.McpRoot, NewSessionId(), NullLoggerFactory.Instance);
+        var pinger = new BridgePinger(registry);
+
+        var result = await pinger.PingAsync(CancellationToken.None);
+
+        Assert.That(result.Capabilities, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Capabilities!["unsafe"], Is.True);
+            Assert.That(result.Capabilities!["world_control"], Is.False);
+        });
     }
 
     [Test]

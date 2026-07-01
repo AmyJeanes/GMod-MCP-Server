@@ -100,6 +100,14 @@ local function processOne(filename)
             -- timeout. nil when unset, so the field is simply absent from _ping.
             bootstrap_error = MCP._bootstrap_error,
         }
+        -- Live capability convar values (id -> granted bool), so the host's status tool
+        -- reports the CURRENT grant state rather than the manifest snapshot (which is
+        -- written at registration and goes stale if a convar is flipped afterward).
+        local caps = {}
+        for id, cap in pairs(MCP._capabilities or {}) do
+            caps[id] = GetConVar(cap.convar):GetBool()
+        end
+        resp.capabilities = caps
         -- Client realm only: the host pairs this with its own GetForegroundWindow
         -- check to detect (and flicker-fix) GMod's stuck mouse-grab after a
         -- background launch. Explicit assignment, not `and`/`or`, so a genuine

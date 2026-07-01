@@ -48,6 +48,7 @@ public sealed class BridgePinger
             string? bootstrapError = null;
             bool? hasFocus = null;
             int? generation = null;
+            IReadOnlyDictionary<string, bool>? capabilities = null;
             if (resp.Result is JsonObject obj)
             {
                 if (obj.TryGetPropertyValue("enabled", out var enNode)
@@ -109,17 +110,32 @@ public sealed class BridgePinger
                 {
                     hasFocus = hfBool;
                 }
+
+                // Live capability convar values (id -> granted bool), so host_status can
+                // report the current grant state instead of the manifest snapshot.
+                if (obj.TryGetPropertyValue("capabilities", out var capNode) && capNode is JsonObject capObj)
+                {
+                    var dict = new Dictionary<string, bool>(StringComparer.Ordinal);
+                    foreach (var kv in capObj)
+                    {
+                        if (kv.Value is JsonValue cv && cv.TryGetValue<bool>(out var cb))
+                        {
+                            dict[kv.Key] = cb;
+                        }
+                    }
+                    capabilities = dict;
+                }
             }
 
-            return new BridgePingResult(true, sw.Elapsed.TotalMilliseconds, enabled, map, bootstrapPending, maxPlayers, singlePlayer, bootstrapError, hasFocus, generation);
+            return new BridgePingResult(true, sw.Elapsed.TotalMilliseconds, enabled, map, bootstrapPending, maxPlayers, singlePlayer, bootstrapError, hasFocus, generation, capabilities);
         }
         catch (TaskCanceledException)
         {
-            return new BridgePingResult(false, null, null, null, null, null, null, null, null, null);
+            return new BridgePingResult(false, null, null, null, null, null, null, null, null, null, null);
         }
         catch (Exception)
         {
-            return new BridgePingResult(false, null, null, null, null, null, null, null, null, null);
+            return new BridgePingResult(false, null, null, null, null, null, null, null, null, null, null);
         }
     }
 
@@ -178,4 +194,5 @@ public readonly record struct BridgePingResult(
     bool? SinglePlayer,
     string? BootstrapError,
     bool? HasFocus,
-    int? Generation);
+    int? Generation,
+    IReadOnlyDictionary<string, bool>? Capabilities);

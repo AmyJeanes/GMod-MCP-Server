@@ -34,48 +34,37 @@ public sealed class StatusTool : IHostTool
         var snap = _proc.Snapshot();
         var manifest = _manifest.Current;
 
-        var capabilities = new JsonArray();
-        foreach (var cap in manifest.Capabilities.Values)
-        {
-            capabilities.Add(new JsonObject
-            {
-                ["id"] = cap.Id,
-                ["convar"] = cap.ConVar,
-                ["current"] = cap.Current,
-                ["default"] = cap.Default,
-            });
-        }
-
         var bridgeNode = new JsonObject
         {
             ["tools"] = manifest.Tools.Count,
-            ["capabilities"] = capabilities,
         };
 
+        BridgePingResult? ping = null;
         if (snap.Running)
         {
-            var ping = await _pinger.PingAsync(ct).ConfigureAwait(false);
-            bridgeNode["reachable"] = ping.Reachable;
-            bridgeNode["latency_ms"] = ping.LatencyMs;
-            bridgeNode["enabled"] = ping.Enabled;
-            bridgeNode["map"] = ping.Map;
-            bridgeNode["maxplayers"] = ping.MaxPlayers;
-            bridgeNode["singleplayer"] = ping.SinglePlayer;
-            bridgeNode["bootstrap_pending"] = ping.BootstrapPending;
-            bridgeNode["bootstrap_error"] = ping.BootstrapError;
-            if (ping.BootstrapError != null)
+            var p = await _pinger.PingAsync(ct).ConfigureAwait(false);
+            ping = p;
+            bridgeNode["reachable"] = p.Reachable;
+            bridgeNode["latency_ms"] = p.LatencyMs;
+            bridgeNode["enabled"] = p.Enabled;
+            bridgeNode["map"] = p.Map;
+            bridgeNode["maxplayers"] = p.MaxPlayers;
+            bridgeNode["singleplayer"] = p.SinglePlayer;
+            bridgeNode["bootstrap_pending"] = p.BootstrapPending;
+            bridgeNode["bootstrap_error"] = p.BootstrapError;
+            if (p.BootstrapError != null)
             {
-                bridgeNode["hint"] = ping.BootstrapError;
+                bridgeNode["hint"] = p.BootstrapError;
             }
-            else if (!ping.Reachable)
+            else if (!p.Reachable)
             {
                 bridgeNode["hint"] = "GMod is running but the bridge didn't respond — likely still loading, or paused on a menu.";
             }
-            else if (ping.BootstrapPending == true)
+            else if (p.BootstrapPending == true)
             {
                 bridgeNode["hint"] = "Bridge reachable but the host_launch bootstrap is still in progress (workshop mount or post-mount map transition).";
             }
-            else if (ping.Enabled == false)
+            else if (p.Enabled == false)
             {
                 bridgeNode["hint"] = "Bridge reachable but mcp_enable is 0. Run `mcp_enable 1` in the GMod console to allow tool dispatch.";
             }
@@ -90,6 +79,27 @@ public sealed class StatusTool : IHostTool
             bridgeNode["singleplayer"] = null;
             bridgeNode["bootstrap_pending"] = null;
         }
+
+        // Capabilities: prefer the live convar values carried on the ping (so a convar
+        // flipped after registration reads correctly); fall back to the manifest snapshot
+        // when GMod is down or the ping carried none (older addon build).
+        var capabilities = new JsonArray();
+        foreach (var cap in manifest.Capabilities.Values)
+        {
+            var current = cap.Current;
+            if (ping is { Capabilities: { } liveCaps } && liveCaps.TryGetValue(cap.Id, out var liveVal))
+            {
+                current = liveVal;
+            }
+            capabilities.Add(new JsonObject
+            {
+                ["id"] = cap.Id,
+                ["convar"] = cap.ConVar,
+                ["current"] = current,
+                ["default"] = cap.Default,
+            });
+        }
+        bridgeNode["capabilities"] = capabilities;
 
         var result = new JsonObject
         {
