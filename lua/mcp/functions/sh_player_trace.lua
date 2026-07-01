@@ -1,60 +1,45 @@
 -- player_trace: raycast from a player's eyes along their view -- "what am I looking at."
 -- Returns the hit entity (index/class -- drill in with entity_state), hit position,
--- distance, surface normal and material. Replaces the hand-rolled
--- util.TraceLine{start=EyePos(), endpos=EyePos()+aim*N, filter=ply} idiom. Subject selector
--- like player_state (host/bot/name/userid/entindex/all; no selector = host). Both realms
--- (_sv traces server collision, _cl client). Read-only/ungated.
+-- distance, surface normal and material (shared MCP.trace.HitBlock, same shape world_trace
+-- returns). Replaces the hand-rolled util.TraceLine{start=EyePos(), endpos=EyePos()+aim*N,
+-- filter=ply} idiom. Subject selector like player_state (host/bot/name/userid/entindex/all;
+-- no selector = host). Both realms (_sv traces server collision, _cl client). Ungated.
+-- For an arbitrary origin (not a player's eyes), use world_trace.
 
 local TRACE_DISTANCE = 16384 -- default ray length: Source's canonical MAX_TRACE_LENGTH
 local MAX_DISTANCE = 100000
 
--- tr.MatType is a byte; MCP.util.DecodeEnum("MAT_", ...) maps it to its MAT_* constant name
--- ("MAT_" excludes the "MATERIAL_" prefix -- 4th char differs).
+local function parseVec3(t)
+    if type(t) ~= "table" then return nil end
+    local x, y, z = tonumber(t[1] or t.x), tonumber(t[2] or t.y), tonumber(t[3] or t.z)
+    if not (x and y and z) then return nil end
+    return Vector(x, y, z)
+end
 
-local function traceFrom(ply, dist)
-    local eye = ply:EyePos()
+-- Trace from `ply` along its eye angles. opts: distance, origin (start override, default
+-- EyePos), mins/maxs (swept-hull instead of a line).
+local function traceFrom(ply, opts)
     local ang = ply:EyeAngles()
-    local tr = util.TraceLine({
-        start = eye,
-        endpos = eye + ang:Forward() * dist,
+    local start = opts.origin or ply:EyePos()
+
+    local td = {
+        start = start,
+        endpos = start + ang:Forward() * opts.distance,
         filter = ply,
-    })
-
-    local r = {
-        subject = MCP.player.Identity(ply),
-        start_pos = eye,
-        aim_angles = ang,
-        hit = tr.Hit == true,
-        hit_world = tr.HitWorld == true,
-        hit_sky = tr.HitSky == true,
-        fraction = math.Round(tr.Fraction, 4),
-        distance = math.Round(eye:Distance(tr.HitPos), 1),
-        hit_pos = tr.HitPos,
-        hit_normal = tr.HitNormal,
     }
+    if opts.mins then td.mins, td.maxs = opts.mins, opts.maxs end
+    local tr = opts.mins and util.TraceHull(td) or util.TraceLine(td)
 
-    local ent = tr.Entity
-    if IsValid(ent) then
-        local e = {
-            index = ent:EntIndex(),
-            class = ent:GetClass(),
-            is_player = ent:IsPlayer(),
-            is_npc = ent:IsNPC(),
-        }
-        local nm = ent:IsPlayer() and ent:Nick() or ent:GetName()
-        if nm and nm ~= "" then e.name = nm end
-        r.entity = e
-    end
-
-    if isstring(tr.HitTexture) and tr.HitTexture ~= "" then r.surface = tr.HitTexture end
-    if isnumber(tr.MatType) then r.material_type = MCP.util.DecodeEnum("MAT_", tr.MatType) end
-
+    local r = MCP.trace.HitBlock(tr, start)
+    r.subject = MCP.player.Identity(ply)
+    r.aim_angles = ang
+    if opts.mins then r.hull = { mins = opts.mins, maxs = opts.maxs } end
     return r
 end
 
 MCP:AddFunction({
     id = "player_trace",
-    description = "Raycast from a player's eyes along their view and report what they're looking at -- the hit entity (index and class; drill in with entity_state), hit position, distance from the eye, surface normal, and surface material/texture. The trace filters out the subject itself and uses a standard solid mask. Subject is exactly one of `host` (the listen/SP host), `bot`, `name`, `userid`, or `entindex` -- or `all` to trace from every player (returns a `traces` array). With no selector it defaults to the host. `distance` sets the ray length (default 16384). When nothing is hit within range, hit=false and the entity field is omitted; hit_world=true means the ray hit the map (no entity). Runs in both realms (_sv traces server collision, _cl client). Read-only.",
+    description = "Raycast from a player's eyes along their view and report what they're looking at -- the hit entity (index and class; drill in with entity_state), hit position, distance from the eye, surface normal, and surface material/texture. The trace filters out the subject itself and uses a standard solid mask. Subject is exactly one of `host` (the listen/SP host), `bot`, `name`, `userid`, or `entindex` -- or `all` to trace from every player (returns a `traces` array). With no selector it defaults to the host. `distance` sets the ray length (default 16384). Supply `origin` to trace from a point other than the eyes (still along the player's view direction), and `mins`+`maxs` for a swept-hull trace instead of a line. When nothing is hit within range, hit=false and the entity field is omitted; hit_world=true means the ray hit the map (no entity). For an arbitrary origin and direction, use world_trace instead. Runs in both realms (_sv traces server collision, _cl client). Read-only.",
     schema = {
         type = "object",
         properties = {
@@ -86,6 +71,18 @@ MCP:AddFunction({
                 type = "number", minimum = 1, maximum = MAX_DISTANCE,
                 description = "Ray length in units (default 16384). The engine clamps very long traces to its max length.",
             },
+            origin = {
+                type = "array", items = { type = "number" }, minItems = 3, maxItems = 3,
+                description = "Start the ray at this [x,y,z] instead of the player's eye position (direction is still the player's view).",
+            },
+            mins = {
+                type = "array", items = { type = "number" }, minItems = 3, maxItems = 3,
+                description = "Hull mins [x,y,z]; supply with `maxs` for a swept-hull trace (util.TraceHull) instead of a line.",
+            },
+            maxs = {
+                type = "array", items = { type = "number" }, minItems = 3, maxItems = 3,
+                description = "Hull maxs [x,y,z]; supply with `mins`.",
+            },
         },
     },
     handler = function(args)
@@ -93,18 +90,34 @@ MCP:AddFunction({
 
         local dist = math.Clamp(tonumber(args.distance) or TRACE_DISTANCE, 1, MAX_DISTANCE)
 
+        local origin
+        if args.origin ~= nil then
+            origin = parseVec3(args.origin)
+            if not origin then return { ok = false, error = "`origin` must be a [x,y,z] position" } end
+        end
+
+        local mins, maxs
+        if args.mins ~= nil or args.maxs ~= nil then
+            mins, maxs = parseVec3(args.mins), parseVec3(args.maxs)
+            if not (mins and maxs) then
+                return { ok = false, error = "a hull trace needs both `mins` and `maxs` as [x,y,z]" }
+            end
+        end
+
+        local opts = { distance = dist, origin = origin, mins = mins, maxs = maxs }
+
         local list, err = MCP.player.Resolve(args, { default_host = true })
         if not list then return { ok = false, error = err } end
 
         if args.all then
             local out = {}
             for _, p in ipairs(list) do
-                if IsValid(p) then out[#out + 1] = traceFrom(p, dist) end
+                if IsValid(p) then out[#out + 1] = traceFrom(p, opts) end
             end
             return { ok = true, realm = MCP.util.RealmName(), count = #out, traces = out }
         end
 
-        local r = traceFrom(list[1], dist)
+        local r = traceFrom(list[1], opts)
         r.ok = true
         r.realm = MCP.util.RealmName()
         return r

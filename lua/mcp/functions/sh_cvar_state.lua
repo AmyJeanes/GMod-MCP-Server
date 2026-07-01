@@ -5,28 +5,7 @@
 -- in this realm, so a replicated server convar is visible on the client but a client-only
 -- convar isn't on the server. Ungated (structured read).
 
--- FCVAR_* are bit flags; decode the GetFlags bitmask to the set constant names. Built
--- lazily on first use (not at file-load) so registration stays bare for the headless
--- tool-list generator (no _G scan at load), mirroring entity_state's enum maps.
-local fcvarBits
-local function ensureFcvarBits()
-    if fcvarBits then return fcvarBits end
-    fcvarBits = {}
-    for k, v in pairs(_G) do
-        if isnumber(v) and v > 0 and string.sub(k, 1, 6) == "FCVAR_" then
-            fcvarBits[#fcvarBits + 1] = { bit = v, name = k }
-        end
-    end
-    return fcvarBits
-end
-
-local function decodeFlags(flags)
-    local out = {}
-    for _, f in ipairs(ensureFcvarBits()) do
-        if bit.band(flags, f.bit) ~= 0 then out[#out + 1] = f.name end
-    end
-    return out
-end
+-- FCVAR_* flags decode via MCP.util.DecodeBits (shared with world_trace's CONTENTS_*).
 
 MCP:AddFunction({
     id = "cvar_state",
@@ -70,7 +49,7 @@ MCP:AddFunction({
         local flags = get("GetFlags")
         if isnumber(flags) then
             r.flags_raw = flags
-            r.flags = decodeFlags(flags)
+            r.flags = MCP.util.DecodeBits("FCVAR_", flags)
         end
         -- GetMin/GetMax return the bound or nil when unbounded; include only real numbers.
         local mn, mx = get("GetMin"), get("GetMax")

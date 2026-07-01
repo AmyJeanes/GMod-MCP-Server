@@ -129,6 +129,35 @@ function MCP.util.DecodeEnum(prefix, v)
     return MCP.util.EnumMap(prefix)[v] or v
 end
 
+-- List every _G constant named "<prefix>*" that holds a POSITIVE number, as {bit,name}
+-- pairs -- the set of single flags for a bitmask (FCVAR_*, CONTENTS_*). The >0 filter drops
+-- the zero sentinel (e.g. CONTENTS_EMPTY) that band() can never match. Lazy + memoized per
+-- prefix like EnumMap so registration stays generator-safe.
+local bitCache = {}
+function MCP.util.BitList(prefix)
+    local cached = bitCache[prefix]
+    if cached then return cached end
+    local list = {}
+    for k, v in pairs(_G) do
+        if isnumber(v) and v > 0 and string.sub(k, 1, #prefix) == prefix then
+            list[#list + 1] = { bit = v, name = k }
+        end
+    end
+    bitCache[prefix] = list
+    return list
+end
+
+-- Decode a bitmask to the set of "<prefix>*" flag names present in it (e.g. FCVAR_ convar
+-- flags, CONTENTS_ point-contents). nil passes through.
+function MCP.util.DecodeBits(prefix, mask)
+    if not isnumber(mask) then return nil end
+    local out = {}
+    for _, f in ipairs(MCP.util.BitList(prefix)) do
+        if bit.band(mask, f.bit) ~= 0 then out[#out + 1] = f.name end
+    end
+    return out
+end
+
 -- Validates a request/response id is safe to use as a filename component.
 -- Allows alphanumerics, underscore, hyphen, and period.
 function MCP.util.IsSafeId(id)
