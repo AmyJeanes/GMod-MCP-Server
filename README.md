@@ -78,8 +78,8 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `entity_find_sv` | server | — | Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. |
 | `entity_remove_sv` | server | — | Remove entities server-side and wait until they are actually gone before reporting (:Remove is deferred, so a same-call count would be stale). |
 | `entity_set_sv` | server | — | Mutate one entity's transform, render and physics state by index, then confirm. |
-| `entity_state_cl` | client | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render, collision, bounds, hierarchy, physics and health in a single read. |
-| `entity_state_sv` | server | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render, collision, bounds, hierarchy, physics and health in a single read. |
+| `entity_state_cl` | client | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render (incl. |
+| `entity_state_sv` | server | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render (incl. |
 | `game_set_sv` | server | — | Set one or more curated, safe server-tuning knobs, wait for them to settle, and report the actual values. |
 | `game_state_sv` | server | — | Structured snapshot of server-wide game state in one read -- current map, gamemode, hostname, singleplayer/dedicated flags, max player slots, player/bot/human counts, a lean roster of every player (name/userid/entindex/is_bot/is_host/team -- drill into one with player_state or entity_state), a `tuning` block with the live values of game_set's knobs (gravity, timescale, phys_timescale, fakelag), and `cheats_enabled` (sv_cheats) -- which gates whether game_set's timescale/fakelag will take. |
 | `lua_run_cl` | client | `unsafe` | Compile and execute Lua source in this realm. |
