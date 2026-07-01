@@ -50,6 +50,7 @@ end
 
 MCP:AddFunction({
     id = "entity_set",
+    requires = { "world_control" },
     description = "Mutate one entity's transform, render and physics state by index, then confirm. The write-half of the entity family (entity_state reads, entity_find locates, entity_create spawns, entity_remove deletes) -- the entity counterpart of player_set. Every arg is optional except `index`; supply any subset (at least one mutation). Transform: `pos` [x,y,z], `angles` [pitch,yaw,roll]. Render: `color` [r,g,b(,a)] (alpha<255 -> translucent render mode), `material` (\"\" clears), `nodraw`, `skin`, `model_scale`. Collision/hierarchy: `collision_group` (COLLISION_GROUP_* name), `movetype` (MOVETYPE_* name -- use MOVETYPE_NONE to pin an NPC, which ignores physics freeze), `parent` (entindex to parent to, or -1 to unparent). Physics (need a valid physics object -- a requested physics mutation that can't apply is reported in `skipped`, the rest still apply): `frozen` (true = freeze in place / disable motion, false = unfreeze + wake), `velocity` [x,y,z], `mass`, `gravity`, `wake` (force the physics object awake). Players are refused -- use player_set for players (it owns pose/holds and keeps prediction consistent). When `pos` is set without a `velocity`, the call waits for the entity to settle and reports where it actually came to rest (settled / moved_after_place / in_solid); a requested velocity means intentional motion, so it returns immediately.",
     schema = {
         type = "object",

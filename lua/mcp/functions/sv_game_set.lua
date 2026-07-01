@@ -25,6 +25,7 @@ local function approx(a, b) return math.abs(a - b) < 1e-3 end
 
 MCP:AddFunction({
     id = "game_set",
+    requires = { "world_control" },
     description = "Set one or more curated, safe server-tuning knobs, wait for them to settle, and report the actual values. The write-half paired with game_state. Ungated and typed -- it is the safe front for the common testing knobs, vs the unsafe general cvar_set: gravity (sv_gravity), timescale (host_timescale -- scales the whole clock), phys_timescale (physics-only time scale), fakelag (net_fakelag, simulated lag in ms). Supply any subset (at least one); each is clamped to a safe range (a clamp is reported via clamped_from). Per knob it reports requested/before/value/took/changed: `took` is false when the value clamped or was rejected. `timescale` and `fakelag` are cheat-protected -- game_set never flips sv_cheats, so with it off they report took=false (use phys_timescale, which needs no cheats, or set sv_cheats via cvar_set first). Optional `restore_after` auto-reverts every knob changed by this call to its prior value after that many seconds (max 60), fire-and-forget: the call returns now and the revert runs in the background; a later game_set on the same knob cancels the pending revert.",
     schema = {
         type = "object",

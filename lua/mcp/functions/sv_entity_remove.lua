@@ -26,6 +26,7 @@ end
 
 MCP:AddFunction({
     id = "entity_remove",
+    requires = { "world_control" },
     description = "Remove entities server-side and wait until they are actually gone before reporting (:Remove is deferred, so a same-call count would be stale). The delete-half of the entity family (entity_create spawns, entity_state reads, entity_find locates, entity_set mutates). Select with EXACTLY ONE of: `index` (one entity by index), `class` (wildcard ok, e.g. \"npc_*\" -- all matching), `model` (model-path substring, e.g. \"watermelon01_chunk\" to clear gib debris), `tag` (every entity_create spawn under that cleanup tag), or `mcp_spawned` (every entity created via entity_create -- the catch-all test-cleanup mode). Never removes players (use bot_remove for bots) or the worldspawn; the bulk modes silently skip them. Returns matched/removed counts, whether removal settled, and the removed entities' identities (capped).",
     schema = {
         type = "object",

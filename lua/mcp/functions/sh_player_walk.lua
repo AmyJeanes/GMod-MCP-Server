@@ -203,6 +203,7 @@ end
 
 MCP:AddFunction({
     id = "player_walk",
+    requires = { "player_control" },
     -- Blocking handler: tell the host to wait up to the full walk (hardDeadline =
     -- seconds + 1) plus bridge/poll slack, instead of its default 10s per call.
     timeout = MAX_SECONDS + 3,

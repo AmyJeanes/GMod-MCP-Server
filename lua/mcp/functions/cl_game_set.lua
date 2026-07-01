@@ -18,6 +18,7 @@
 
 MCP:AddFunction({
     id = "game_set",
+    requires = { "world_control" },
     description = "Set curated client-only game knobs, then confirm. The client counterpart of game_set_sv (which sets the shared server convar knobs like gravity/timescale). Supply at least one knob. `background_render`: override system.HasFocus() so clientside rendering that is gated on window focus keeps running while the game is backgrounded -- many addons (world-portals, vrmod) stop rendering when unfocused, and this unblocks them (e.g. to keep a portal surface or VR view live for a backgrounded screenshot). true installs the override (system.HasFocus always reports focused); false restores the original. It does NOT raise the backgrounded frame rate (that is fps_max_nofocus, which no Lua path can set) -- it only unblocks focus-gated Lua. The report distinguishes what HasFocus now reports (has_focus_reported) from the real window focus (real_has_focus, read through the saved original), so the override is never mistaken for genuine focus. Ungated (a bounded, specific lever, not arbitrary code).",
     schema = {
         type = "object",
