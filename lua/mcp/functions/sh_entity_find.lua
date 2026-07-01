@@ -29,6 +29,26 @@ local function classMatcher(pat)
     return function(c) return string.match(c, p) ~= nil end
 end
 
+-- Curated per-row fields for include_fields -- lets a caller enrich the lean rows in one
+-- query instead of drilling each index with entity_state (the N+1 the scan flagged). Each is
+-- pcall'd per row so a getter that errors just omits its field. Defined at file scope (closures
+-- only, no game-global access at load) so registration stays generator-safe.
+local ROW_FIELDS = {
+    angles = function(e) return e:GetAngles() end,
+    velocity = function(e) return e:GetVelocity() end,
+    speed = function(e) return e:GetVelocity():Length() end,
+    color = function(e) return e:GetColor() end,
+    material = function(e) local m = e:GetMaterial() return m ~= "" and m or nil end,
+    skin = function(e) return e:GetSkin() end,
+    health = function(e) return e:Health() end,
+    nodraw = function(e) return e:GetNoDraw() end,
+    model_scale = function(e) return e:GetModelScale() end,
+    name = function(e) local n = e:GetName() return n ~= "" and n or nil end,
+    parent = function(e) local p = e:GetParent() return IsValid(p) and p:EntIndex() or nil end,
+    collision_group = function(e) return MCP.util.DecodeEnum("COLLISION_GROUP_", e:GetCollisionGroup()) end,
+    movetype = function(e) return MCP.util.DecodeEnum("MOVETYPE_", e:GetMoveType()) end,
+}
+
 -- The listen/SP host: LocalPlayer on the client, the IsListenServerHost player on
 -- the server. Used as the default sort centre so a plain scan returns nearest-to-you.
 local function hostPlayer()
@@ -44,7 +64,7 @@ end
 
 MCP:AddFunction({
     id = "entity_find",
-    description = "Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. Filter by class (wildcard ok, e.g. prop_*), model substring, a sphere (radius around an entity/point), an axis-aligned box, or all entities; filters combine (AND). Results are sorted nearest-first (to the given centre, or the host player when none is given) and capped (default 25, max 200), with total_matched and capped reported -- so a broad query can't blow the token budget. Drill into any returned index with entity_state. Realm-aware: the client realm only sees entities currently in its PVS (dormant or parked entities won't appear), so _sv and _cl results can differ. Runs in both realms.",
+    description = "Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. Filter by class (wildcard ok, e.g. prop_*), model substring, a sphere (radius around an entity/point), an axis-aligned box, or all entities; filters combine (AND). Results are sorted nearest-first (to the given centre, or the host player when none is given) and capped (default 25, max 200), with total_matched and capped reported -- so a broad query can't blow the token budget. Drill into any returned index with entity_state, or enrich the rows in one pass with include_fields (angles/velocity/color/health/name/parent/etc.) and include_bounds instead of an entity_state per row. Realm-aware: the client realm only sees entities currently in its PVS (dormant or parked entities won't appear), so _sv and _cl results can differ. Runs in both realms.",
     schema = {
         type = "object",
         properties = {
@@ -86,6 +106,14 @@ MCP:AddFunction({
                 type = "integer", minimum = 1, maximum = 200,
                 description = "Max rows to return (default 25, max 200). Results are nearest-first, so the cap keeps the closest.",
             },
+            include_bounds = {
+                type = "boolean",
+                description = "Add each returned row's OBB bounds { obb_mins, obb_maxs }.",
+            },
+            include_fields = {
+                type = "array", items = { type = "string" },
+                description = "Extra per-row fields to include in one query instead of drilling each index with entity_state. Allowed: angles, velocity, speed, color, material, skin, health, nodraw, model_scale, name, parent, collision_group, movetype. Computed only for the returned (post-cap) rows.",
+            },
         },
     },
     handler = function(args)
@@ -99,6 +127,21 @@ MCP:AddFunction({
 
         if not (hasClass or hasModel or radius or box or wantAll) then
             return { ok = false, error = "specify at least one of: class, model, radius (with around/point), box, all" }
+        end
+
+        local wantBounds = args.include_bounds == true
+        local fields
+        if args.include_fields ~= nil then
+            if not istable(args.include_fields) then
+                return { ok = false, error = "`include_fields` must be an array of field names" }
+            end
+            fields = {}
+            for _, f in ipairs(args.include_fields) do
+                if not ROW_FIELDS[f] then
+                    return { ok = false, error = "`include_fields`: unknown field '" .. tostring(f) .. "' (allowed: angles, velocity, speed, color, material, skin, health, nodraw, model_scale, name, parent, collision_group, movetype)" }
+                end
+                fields[#fields + 1] = f
+            end
         end
 
         -- Resolve an explicit centre from around/point (used for both the sphere and the sort).
@@ -157,6 +200,9 @@ MCP:AddFunction({
                         local pos = e:GetPos()
                         local row = { index = e:EntIndex(), class = cls, model = mdl, pos = pos }
                         if center then row.distance = math.Round(pos:Distance(center), 1) end
+                        -- Keep the entity ref so include_fields/bounds enrich only the
+                        -- surviving (post-cap) rows, not the whole match set (avoids N+1).
+                        if fields or wantBounds then row._ent = e end
                         rows[#rows + 1] = row
                     end
                 end
@@ -171,6 +217,23 @@ MCP:AddFunction({
         local limit = math.Clamp(math.floor(tonumber(args.limit) or 25), 1, 200)
         local results = {}
         for i = 1, math.min(limit, total) do results[i] = rows[i] end
+
+        -- Enrich only the returned rows, then drop the entity ref so it isn't serialized.
+        if fields or wantBounds then
+            for _, row in ipairs(results) do
+                local e = row._ent
+                if IsValid(e) then
+                    if fields then
+                        for _, f in ipairs(fields) do
+                            local okF, v = pcall(ROW_FIELDS[f], e)
+                            if okF and v ~= nil then row[f] = v end
+                        end
+                    end
+                    if wantBounds then row.bounds = { obb_mins = e:OBBMins(), obb_maxs = e:OBBMaxs() } end
+                end
+                row._ent = nil
+            end
+        end
 
         return {
             ok = true,

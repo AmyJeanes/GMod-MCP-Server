@@ -85,6 +85,7 @@ local clientDesc = "Walk the local (host) player naturally by driving the real m
 local serverDesc = "Walk a target player or bot naturally by driving its CUserCmd each tick via StartCommand -- the canonical way to control bots. Target exactly one of `bot` (the sole bot), `name`, `userid`, or `entindex`. Best for bots (no client, so no prediction conflict); driving a remote human rubber-bands them on their machine, and driving the listen-server host works but returns a `warning` -- player_walk_cl is the faithful path for the host (no prediction round-trip). Set analog forward/side (-1..1, relative to view yaw), sprint/crouch, a single `jump` or continuous `bhop`, and a view: a held `angles`, `look_at`/`look_at_entity` tracking, or a continuous `yaw_rate`/`pitch_rate` spin. `oscillate` adds a sine weave to forward or side (slalom/patrol). Runs for `seconds` (required) or until the first of `distance`, `stop_on_teleport`, `stop_near`, `until`, or stuck. Returns the downsampled trajectory, start/end pose, displacement, max speed, airborne/movetype/frozen, `teleported`/`view_hold_released`, and a `target` identity block. (Target a clean bot: the `bot` command, or a respawned player.CreateNextBot -- a first-spawn player.CreateNextBot has a clientside crouch desync unrelated to this tool.)"
 
 local untilExample = CLIENT and "LocalPlayer():WaterLevel() >= 2" or "player.GetBots()[1]:WaterLevel() >= 2"
+local sampleExample = CLIENT and "LocalPlayer():GetVelocity():Length()" or "player.GetBots()[1]:GetVelocity():Length()"
 
 local schema = {
     type = "object",
@@ -173,6 +174,10 @@ local schema = {
             type = "string",
             description = "A Lua expression evaluated " .. (CLIENT and "client" or "server") .. "-side every frame; the walk ends when it returns truthy (ended_reason `until`). E.g. \"" .. untilExample .. "\".",
         },
+        sample_expr = {
+            type = "string",
+            description = "A Lua expression evaluated " .. (CLIENT and "client" or "server") .. "-side at each trajectory sample; its value rides on that sample as `v` (serialized), so you can record a value over the walk alongside position. If it errors, sampling stops and `sample_error` is reported (the walk still finishes). E.g. \"" .. sampleExample .. "\".",
+        },
     },
     required = { "seconds" },
 }
@@ -201,10 +206,10 @@ MCP:AddFunction({
     -- Blocking handler: tell the host to wait up to the full walk (hardDeadline =
     -- seconds + 1) plus bridge/poll slack, instead of its default 10s per call.
     timeout = MAX_SECONDS + 3,
-    -- Only `until` runs caller-supplied Lua, so gate just that arg on `unsafe` --
-    -- the rest of player_walk stays ungated. Dispatch rejects `until` when ungranted
-    -- before the handler runs.
-    arg_requires = { ["until"] = { "unsafe" } },
+    -- `until` and `sample_expr` run caller-supplied Lua, so gate just those args on
+    -- `unsafe` -- the rest of player_walk stays ungated. Dispatch rejects a gated arg
+    -- when ungranted before the handler runs.
+    arg_requires = { ["until"] = { "unsafe" }, sample_expr = { "unsafe" } },
     description = CLIENT and clientDesc or serverDesc,
     schema = schema,
     handler = function(args, ctx)
@@ -321,6 +326,17 @@ MCP:AddFunction({
             untilFn = compiled
         end
 
+        -- sample_expr: arbitrary Lua sampled per trajectory point (unsafe per-arg, gated at
+        -- dispatch like `until`). On a runtime error we stop sampling and report it rather
+        -- than aborting the walk, so the trajectory so far is preserved.
+        local sampleFn
+        if args.sample_expr ~= nil then
+            local compiled = CompileString("return (" .. tostring(args.sample_expr) .. ")", "player_walk_sample", false)
+            if type(compiled) == "string" then return { ok = false, error = "`sample_expr` compile error: " .. compiled } end
+            sampleFn = compiled
+        end
+        local sampleError
+
         local hasMovement = forward ~= 0 or side ~= 0 or osc ~= nil
         local hasView = angles ~= nil or lookAtPoint ~= nil or lookAtEnt ~= nil or hasRates
         local hasJump = singleJump or bhop
@@ -352,6 +368,21 @@ MCP:AddFunction({
         -- Evolving angle for the continuous-spin mode (base = angles or the start view).
         local spinAng = hasRates and (angles or Angle(startAng.p, startAng.y, startAng.r)) or nil
 
+        -- Attach the sample_expr value to a trajectory row (if requested). On the first
+        -- runtime error, stop sampling and remember it -- the walk still finishes.
+        local function evalSample(row)
+            if sampleFn then
+                local okS, v = pcall(sampleFn)
+                if not okS then
+                    sampleError = tostring(v)
+                    sampleFn = nil
+                elseif v ~= nil then
+                    row.v = MCP.util.Serialize(v)
+                end
+            end
+            return row
+        end
+
         local hookId = uniqueId()
         local driverHook = CLIENT and "CreateMove" or "StartCommand"
         local fired = false
@@ -380,12 +411,12 @@ MCP:AddFunction({
             local now = RealTime()
             local endPos = ply:GetPos()
             local endVel = ply:GetVelocity()
-            samples[#samples + 1] = {
+            samples[#samples + 1] = evalSample({
                 t = math.Round(now - startTime, 2),
                 pos = vec3(endPos),
                 speed = math.Round(Vector(endVel.x, endVel.y, 0):Length(), 1),
                 onground = ply:OnGround(),
-            }
+            })
 
             local result = {
                 ok = true,
@@ -412,6 +443,7 @@ MCP:AddFunction({
                 }
             end
             if hostWarning then result.warning = hostWarning end
+            if sampleError then result.sample_error = sampleError end
             ctx.respond(result)
         end
 
@@ -522,12 +554,12 @@ MCP:AddFunction({
 
             if now - lastSample >= SAMPLE_INTERVAL then
                 lastSample = now
-                samples[#samples + 1] = {
+                samples[#samples + 1] = evalSample({
                     t = math.Round(now - startTime, 2),
                     pos = vec3(pos),
                     speed = math.Round(hspeed, 1),
                     onground = onground,
-                }
+                })
             end
 
             -- Terminations, first to fire wins.
