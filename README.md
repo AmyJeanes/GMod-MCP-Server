@@ -96,6 +96,8 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `reload_file_cl` | client | — | Hot-reload one on-disk Lua source file by re-running it in this realm -- a targeted alternative to mcp_reload (which rebuilds the whole MCP addon) and the engine's autorefresh (which only fires for some edits), for iterating on a single file in any addon. |
 | `reload_file_sv` | server | — | Hot-reload one on-disk Lua source file by re-running it in this realm -- a targeted alternative to mcp_reload (which rebuilds the whole MCP addon) and the engine's autorefresh (which only fires for some edits), for iterating on a single file in any addon. |
 | `screenshot_cl` | client | — | Capture a JPEG screenshot. |
+| `world_trace_cl` | client | — | Raycast from an arbitrary origin and report what the ray hits -- the hit entity (index and class; drill in with entity_state), hit position, distance, surface normal and material, plus the origin's point-contents and the trace's solid flags. |
+| `world_trace_sv` | server | — | Raycast from an arbitrary origin and report what the ray hits -- the hit entity (index and class; drill in with entity_state), hit position, distance, surface normal and material, plus the origin's point-contents and the trace's solid flags. |
 <!-- TOOLS:GAME:END -->
 
 ### Capabilities
