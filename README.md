@@ -66,8 +66,8 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `console_read_sv` | server | — | Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. |
 | `cvar_set_cl` | client | `unsafe` | Set a console variable, wait for it to settle, and report the actual stabilized value. |
 | `cvar_set_sv` | server | `unsafe` | Set a console variable, wait for it to settle, and report the actual stabilized value. |
-| `cvar_state_cl` | client | — | Structured snapshot of one console variable -- its current value (as string/int/float/bool), default, decoded FCVAR_* flags, help text and min/max bounds, in a single read. |
-| `cvar_state_sv` | server | — | Structured snapshot of one console variable -- its current value (as string/int/float/bool), default, decoded FCVAR_* flags, help text and min/max bounds, in a single read. |
+| `cvar_state_cl` | client | — | Structured snapshot of one or more console variables -- current value (as string/int/float/bool), default, decoded FCVAR_* flags, help text and min/max bounds, in a single read. |
+| `cvar_state_sv` | server | — | Structured snapshot of one or more console variables -- current value (as string/int/float/bool), default, decoded FCVAR_* flags, help text and min/max bounds, in a single read. |
 | `debug_clear_cl` | client | — | Remove every hook the debug_* tools installed in this realm -- debug_record sampling hooks and (later) debug_draw render hooks, all under the `mcp_debug_` id namespace. |
 | `debug_clear_sv` | server | — | Remove every hook the debug_* tools installed in this realm -- debug_record sampling hooks and (later) debug_draw render hooks, all under the `mcp_debug_` id namespace. |
 | `debug_draw_cl` | client | `unsafe` | Install a persistent client-side render hook that runs your draw Lua every frame, for visual debugging you can then screenshot -- mark an entity, outline a volume, draw a path, label something on the HUD. |
