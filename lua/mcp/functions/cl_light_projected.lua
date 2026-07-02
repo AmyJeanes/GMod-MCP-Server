@@ -22,7 +22,7 @@ local function toVec(t) return Vector(tonumber(t[1]) or 0, tonumber(t[2]) or 0, 
 
 MCP:AddFunction({
     id = "light_projected",
-    description = "Create, update, or remove a clientside ProjectedTexture -- a spotlight test-light rig, the projected-light sibling of debug_draw. The tool owns the lifecycle: a create returns a `handle`, the light stays live across tool calls and screenshots until you remove it (or its `ttl` elapses), and you can update or replace it by handle. Runs no caller Lua -- just structured knobs. To CREATE: give `pos` [x,y,z] plus a direction (`angles` [p,y,r] OR `look_at` [x,y,z] to point at a spot); optional `color` [r,g,b(,a)] 0-255, `brightness` (default 8), `fov` cone degrees (default 90), `distance` far reach (SetFarZ, default 1024), `near` (SetNearZ), `texture` light cookie (default \"effects/flashlight001\"), `shadows` (default false -- shadow-casting projected textures share a tight engine budget), `target` (entindex to SetTargetEntity), `ttl` seconds to auto-remove, `replace` a prior handle (remove-then-create so you can iterate without piling up). To UPDATE: pass `handle` + any subset of the same knobs. To REMOVE: `remove` <handle>, or `remove_all` true. Returns the handle + applied state + `valid` (the object was created -- note whether it actually RENDERS depends on the engine's projected-texture budget, r_projectedtexture_count, especially with shadows). Not swept by debug_clear (that is hook-only) -- use remove/remove_all here.",
+    description = "Create, update, or remove a clientside ProjectedTexture -- a spotlight test-light rig, the projected-light sibling of debug_draw. The tool owns the lifecycle: a create returns a `handle`, the light stays live across tool calls and screenshots until you remove it (or its `ttl` elapses), and you can update or replace it by handle. Runs no caller Lua -- just structured knobs. To CREATE: give `pos` [x,y,z] plus a direction (`angles` [p,y,r] OR `look_at` [x,y,z] to point at a spot); optional `color` [r,g,b(,a)] 0-255, `brightness` (default 8), `fov` cone degrees (default 90), `distance` far reach (SetFarZ, default 1024), `near` (SetNearZ), `texture` light cookie (default \"effects/flashlight001\"), `shadows` (default false -- shadow-casting projected textures share a tight engine budget), `nocull` (SetNoCull -- keep the light rendering from any view angle instead of being frustum-culled; the go-to lever when a shadow light vanishes when viewed off-axis; default false), `target` (entindex to SetTargetEntity), `ttl` seconds to auto-remove, `replace` a prior handle (remove-then-create so you can iterate without piling up). To UPDATE: pass `handle` + any subset of the same knobs. To REMOVE: `remove` <handle>, or `remove_all` true. Returns the handle + applied state + `valid` (the object was created -- note whether it actually RENDERS depends on the engine's projected-texture budget, r_projectedtexture_count, especially with shadows). Not swept by debug_clear (that is hook-only) -- use remove/remove_all here.",
     schema = {
         type = "object",
         properties = {
@@ -36,6 +36,7 @@ MCP:AddFunction({
             near = { type = "number", description = "Near plane distance (SetNearZ). Optional." },
             texture = { type = "string", description = "Projected light-cookie material path. Default \"effects/flashlight001\"." },
             shadows = { type = "boolean", description = "Cast shadows (default false -- shadow projected textures share a tight engine budget)." },
+            nocull = { type = "boolean", description = "Disable the angle-based frustum cull (SetNoCull) so the light keeps rendering from any view angle -- the fix when a shadow-casting light vanishes when looked at off-axis. Default false (engine default)." },
             target = { type = "integer", description = "Entindex to SetTargetEntity (the light follows/targets it). Optional." },
             ttl = { type = "number", description = "Auto-remove the light after this many seconds (max 300). Fire-and-forget." },
             handle = { type = "string", description = "Update an existing light by its handle (from a prior create)." },
@@ -68,7 +69,7 @@ MCP:AddFunction({
         end
 
         -- Create vs update.
-        local pt, handle, action
+        local pt, handle, action, nocullState
         if args.handle ~= nil then
             if type(args.handle) ~= "string" then return { ok = false, error = "`handle` must be a string" } end
             pt = MCP._lights[args.handle]
@@ -97,6 +98,8 @@ MCP:AddFunction({
             pt:SetFOV(90)
             pt:SetColor(color_white)
             pt:SetEnableShadows(false) -- a fresh PT defaults shadows ON; force off (cheaper, matches the doc)
+            pt:SetNoCull(false) -- engine default; set explicitly so a bare create's reported nocull is honest
+            nocullState = false
             MCP._lights[handle] = pt
         end
 
@@ -124,6 +127,11 @@ MCP:AddFunction({
             pt:SetTexture(args.texture)
         end
         if args.shadows ~= nil then pt:SetEnableShadows(args.shadows and true or false) end
+        if args.nocull ~= nil then
+            local nc = args.nocull and true or false
+            pt:SetNoCull(nc)
+            nocullState = nc -- no ProjectedTexture:GetNoCull getter, so report the value we just applied
+        end
         if args.target ~= nil then
             local ent = Entity(tonumber(args.target) or -1)
             if IsValid(ent) then pt:SetTargetEntity(ent) end
@@ -156,6 +164,7 @@ MCP:AddFunction({
             fov = pt:GetHorizontalFOV(),
             far_z = pt:GetFarZ(),
             shadows = pt:GetEnableShadows(),
+            nocull = nocullState,
             ttl = ttl,
             active_lights = table.Count(MCP._lights),
         }
