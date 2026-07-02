@@ -13,17 +13,11 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^\\.github/workflows/.+\\.ya?ml$/"
+        "/^scripts/install-tools\\.ps1$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s+ref: (?<currentValue>\\S+)"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s+\\$\\w+\\s*=\\s*'(?<currentValue>[^']+)'"
       ]
-    }
-  ],
-  "packageRules": [
-    {
-      "matchDepNames": ["AmyJeanes/gmod-addon-tools"],
-      "automerge": false
     }
   ]
 }

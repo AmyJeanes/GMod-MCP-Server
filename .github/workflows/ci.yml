@@ -17,30 +17,17 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          path: GMod-MCP-Server
-
-      - name: Checkout gmod-addon-tools
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          repository: AmyJeanes/gmod-addon-tools
-          # renovate: datasource=github-tags depName=AmyJeanes/gmod-addon-tools
-          ref: v0.1.0
-          path: gmod-addon-tools
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Run glua_check
-        working-directory: GMod-MCP-Server
         shell: pwsh
         run: ./scripts/glua-check.ps1 -Sarif results.sarif
 
       - name: Upload SARIF
-        if: always() && hashFiles('GMod-MCP-Server/results.sarif') != ''
+        if: always() && hashFiles('results.sarif') != ''
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
         with:
-          sarif_file: GMod-MCP-Server/results.sarif
-          checkout_path: ${{ github.workspace }}/GMod-MCP-Server
+          sarif_file: results.sarif
           category: glua_check
 
   dotnet:

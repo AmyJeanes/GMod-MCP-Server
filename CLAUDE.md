@@ -62,7 +62,7 @@ A tool's `seconds` must sit under its declared `timeout` (per-tool request timeo
 ## Tooling
 
 - `.luarc.json` configures sumneko-LuaLS with `./.tools/glua-api` (GLua type stubs).
-- `.tools/` is gitignored. Run `pwsh scripts/install-tools.ps1` once to populate it with the pinned `glua_ls` / `glua_check` binaries and the GLua API stubs — see "First-time setup" below. `install-tools.ps1` is a thin wrapper over the shared `gmod-addon-tools` module, cloned as a sibling (`../gmod-addon-tools`).
+- `.tools/` is gitignored. Run `pwsh scripts/install-tools.ps1` once to populate it with the pinned `glua_ls` / `glua_check` binaries and the GLua API stubs — see "First-time setup" below.
 
 ### Claude Code LSP integration (`glua-lsp` plugin)
 
@@ -70,18 +70,17 @@ Diagnostics, hover, and jump-to-definition are provided via the `glua-lsp` plugi
 
 #### First-time setup (do this before touching `.lua` files)
 
-`scripts/install-tools.ps1` is a thin wrapper over the shared `gmod-addon-tools` module (`Install-GmodTools`), which is the single source of truth for the pinned `glua_check`, `glua_ls`, and GLua-API-stub versions — pinned once there for every consumer addon, so local and CI run the exact same engine. `scripts/bootstrap.ps1` resolves the module from a sibling clone (`../gmod-addon-tools`) and throws a clone hint if it's missing.
+`scripts/install-tools.ps1` is the single source of truth for `glua_check`, `glua_ls`, and the GLua API stubs. Versions are pinned at the top of the script and shared with CI, so local and CI run the exact same engine.
 
-In a fresh clone, clone the module beside this addon, then run install-tools once before touching `.lua` files:
+In a fresh clone, run it once before touching `.lua` files:
 
 ```bash
-git clone https://github.com/AmyJeanes/gmod-addon-tools ../gmod-addon-tools
 pwsh -File scripts/install-tools.ps1
 ```
 
 It is idempotent — re-running is a no-op when the pinned versions are already present, so it's also the recovery path when LSP diagnostics look wrong. The `glua-lsp` Claude Code plugin auto-resolves `glua_ls` from this project's `.tools/bin/` at LSP launch (no PATH plumbing needed); after a fresh install just `/reload-plugins`.
 
-To bump the tooling versions: edit the `$GluaLsVersion` / `$GluaApiVersion` constants in `gmod-addon-tools`'s `src/install.ps1` and cut a new tag there, then bump the `gmod-addon-tools` `ref:` in `.github/workflows/ci.yml`. Renovate (`.github/renovate.json` customManager on the workflow `ref:`) raises that tag bump automatically, gated by the GLua Check CI job.
+To bump a version: edit the `$GluaLsVersion` / `$GluaApiVersion` constants in `scripts/install-tools.ps1`, commit, and CI + every fresh clone picks it up. Renovate (`.github/renovate.json` customManagers) also raises bump PRs automatically, gated by the GLua Check CI job.
 
 The `glua-lsp:install-glua-ls` skill covers the same recovery flow if symptoms appear later.
 
