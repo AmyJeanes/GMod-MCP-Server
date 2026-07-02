@@ -18,6 +18,7 @@ local MAX_SECONDS = 30      -- window hard cap; keep <= the per-tool request tim
 local RAW_CEILING = 5000    -- hard memory cap on raw samples, independent of max_samples
 local SAMPLE_DEPTH = 4      -- per-sample serialization caps so one fat sample can't blow up
 local SAMPLE_NODES = 80     -- (the whole-response node cap is the ultimate backstop)
+local HIST_CAP = 100        -- max distinct values returned in the histogram tally
 
 -- Compile a caller snippet as a function body receiving the shared `state` table, then the
 -- hook's args as `...`. Returns the function, or nil + the compile error string.
@@ -41,7 +42,7 @@ end
 
 MCP:AddFunction({
     id = "debug_record",
-    description = "Record a value each time a hook fires, for a bounded window, then return the time series -- a managed sampling probe that owns the hook lifecycle (unique namespaced hook, duration cap, auto-remove on end/stop/error) so you never hand-roll hook.Add/poll/hook.Remove. Blocks until the window ends. `hook` is the event to attach to (server: Think, Tick, StartCommand, PhysicsCollide, EntityTakeDamage; client: CreateMove, Think, HUDPaint, PreDrawOpaqueRenderables -- any hook name works; one that never fires just yields an empty series at the cap). `sample` is a Lua function body that receives a shared `state` table then the hook's arguments as `...`, and `return`s the value to record (a table or string is fine, not just a number; prefer small values, as large ones may be truncated by the response cap) -- e.g. \"return LocalPlayer():GetVelocity():Length()\" or \"local ply, cmd = ... return cmd:GetForwardMove()\". Return nothing to SKIP that fire, so you record only when a condition holds (sparse/conditional recording). The `state` table (first arg of every snippet) persists across fires, so a sample can compare against earlier frames -- e.g. \"local z = LocalPlayer():GetPos().z local dz = z - (state.lastz or z) state.lastz = z return dz\" to catch teleports. `init` (optional Lua body, same `state`) runs once before the hook installs to seed state; `trigger` (optional, same `state`) runs once right AFTER it installs, so you can arm the recorder and fire the thing you want to record in one atomic call (no gap where the event slips past). `seconds` is the window and hard safety cap (max 30). Optional `stop` (a Lua body with `state` + the same `...`) ends recording early when it returns truthy -- checked every fire. `interval` throttles sampling to at most once per that many seconds (default: every fire). `stats` true also returns an `aggregate` block (numeric_count/min/max/sum/avg) over the numeric samples at FULL resolution -- computed before downsampling, so the true min/max survive. `max_samples` caps the returned series (default 100, max 500); more are recorded and evenly downsampled on return (downsampled=true). Each row is {t = seconds since start, v = the sampled value}. A per-fire error stops and auto-removes the hook and returns the partial series with reason \"error\"; other reasons are \"stop\", \"duration\", \"overflow\" (hit the raw ceiling). Server or client realm -- pick the realm whose hooks you need.",
+    description = "Record a value each time a hook fires, for a bounded window, then return the time series -- a managed sampling probe that owns the hook lifecycle (unique namespaced hook, duration cap, auto-remove on end/stop/error) so you never hand-roll hook.Add/poll/hook.Remove. Blocks until the window ends. `hook` is the event to attach to (server: Think, Tick, StartCommand, PhysicsCollide, EntityTakeDamage; client: CreateMove, Think, HUDPaint, PreDrawOpaqueRenderables -- any hook name works; one that never fires just yields an empty series at the cap). `sample` is a Lua function body that receives a shared `state` table then the hook's arguments as `...`, and `return`s the value to record (a table or string is fine, not just a number; prefer small values, as large ones may be truncated by the response cap) -- e.g. \"return LocalPlayer():GetVelocity():Length()\" or \"local ply, cmd = ... return cmd:GetForwardMove()\". Return nothing to SKIP that fire, so you record only when a condition holds (sparse/conditional recording). The `state` table (first arg of every snippet) persists across fires, so a sample can compare against earlier frames -- e.g. \"local z = LocalPlayer():GetPos().z local dz = z - (state.lastz or z) state.lastz = z return dz\" to catch teleports. `init` (optional Lua body, same `state`) runs once before the hook installs to seed state; `trigger` (optional, same `state`) runs once right AFTER it installs, so you can arm the recorder and fire the thing you want to record in one atomic call (no gap where the event slips past). `seconds` is the window and hard safety cap (max 30). Optional `stop` (a Lua body with `state` + the same `...`) ends recording early when it returns truthy -- checked every fire. `interval` throttles sampling to at most once per that many seconds (default: every fire). `stats` true also returns an `aggregate` block (numeric_count/min/max/sum/avg) over the numeric samples at FULL resolution -- computed before downsampling, so the true min/max survive. `histogram` true instead returns a `histogram` -- a distinct-value tally of the samples ({value, count}, most-frequent first) plus distinct_count, for counting CATEGORICAL outcomes rather than numeric stats (have `sample` return a short string key); computed at full resolution too. `max_samples` caps the returned series (default 100, max 500); more are recorded and evenly downsampled on return (downsampled=true). Each row is {t = seconds since start, v = the sampled value}. A per-fire error stops and auto-removes the hook and returns the partial series with reason \"error\"; other reasons are \"stop\", \"duration\", \"overflow\" (hit the raw ceiling). Server or client realm -- pick the realm whose hooks you need.",
     requires = { "unsafe" },
     -- Blocking past the host's 10s default; declare the window + slack (host clamps to its max).
     timeout = MAX_SECONDS + 3,
@@ -80,6 +81,10 @@ MCP:AddFunction({
                 type = "boolean",
                 description = "When true, also return an `aggregate` block (numeric_count/min/max/sum/avg) over the numeric samples at full resolution (before downsampling).",
             },
+            histogram = {
+                type = "boolean",
+                description = "When true, also return a `histogram` -- a distinct-value tally of the samples (each value as a string key -> count), sorted most-frequent first, at full resolution. Distinct from `stats` (numeric min/max/avg): use this to count categorical outcomes, e.g. how many times each render-context/state string occurred. Have `sample` return a short string key. Capped at 100 distinct values (distinct_count is the true total).",
+            },
             max_samples = {
                 type = "integer", minimum = 2, maximum = 500,
                 description = "Max points in the returned series (default 100). More are recorded and evenly downsampled on return.",
@@ -102,6 +107,7 @@ MCP:AddFunction({
         local interval = math.max(tonumber(args.interval) or 0, 0)
         local maxSamples = math.Clamp(math.floor(tonumber(args.max_samples) or 100), 2, 500)
         local wantStats = args.stats and true or false
+        local wantHistogram = args.histogram and true or false
 
         local sampleFn, serr = compileBody(args.sample, "mcp_debug_sample")
         if not sampleFn then return { ok = false, error = "`sample` compile error: " .. serr } end
@@ -141,6 +147,8 @@ MCP:AddFunction({
 
         -- Full-resolution stats (accumulated as recorded, so they survive downsampling).
         local agg = { numeric = 0, sum = 0, min = nil, max = nil }
+        -- Full-resolution categorical tally (histogram), likewise pre-downsample.
+        local tally, tallyDistinct = {}, 0
 
         hook.Add(hookPoint, hookId, function(...)
             if doneReason then return end -- finished; await RunFor teardown
@@ -171,6 +179,11 @@ MCP:AddFunction({
                         agg.sum = agg.sum + val
                         if not agg.min or val < agg.min then agg.min = val end
                         if not agg.max or val > agg.max then agg.max = val end
+                    end
+                    if wantHistogram then
+                        local key = isstring(val) and val or tostring(val)
+                        if tally[key] == nil then tallyDistinct = tallyDistinct + 1 end
+                        tally[key] = (tally[key] or 0) + 1
                     end
                     if #buffer >= RAW_CEILING then doneReason = "overflow" return end
                 end
@@ -215,6 +228,22 @@ MCP:AddFunction({
                     sum = agg.numeric > 0 and math.Round(agg.sum, 4) or nil,
                     avg = agg.numeric > 0 and math.Round(agg.sum / agg.numeric, 4) or nil,
                 }
+            end
+            if wantHistogram then
+                local rows = {}
+                for k, c in pairs(tally) do rows[#rows + 1] = { value = k, count = c } end
+                table.sort(rows, function(a, b)
+                    if a.count ~= b.count then return a.count > b.count end
+                    return a.value < b.value
+                end)
+                if #rows > HIST_CAP then
+                    local trimmed = {}
+                    for i = 1, HIST_CAP do trimmed[i] = rows[i] end
+                    rows = trimmed
+                    result.histogram_truncated = true
+                end
+                result.histogram = rows
+                result.distinct_count = tallyDistinct
             end
             if doneErr then result.error = doneErr end
             ctx.respond(result)
