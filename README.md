@@ -89,6 +89,7 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `game_set_cl` | client | `world_control` | Set curated client-only game knobs, then confirm. |
 | `game_set_sv` | server | `world_control` | Set one or more curated, safe server-tuning knobs, wait for them to settle, and report the actual values. |
 | `game_state_sv` | server | — | Structured snapshot of server-wide game state in one read -- current map, gamemode, hostname, singleplayer/dedicated flags, max player slots, player/bot/human counts, a lean roster of every player (name/userid/entindex/is_bot/is_host/team -- drill into one with player_state or entity_state), a `tuning` block with the live values of game_set's knobs (gravity, timescale, phys_timescale, fakelag), and `cheats_enabled` (sv_cheats) -- which gates whether game_set's timescale/fakelag will take. |
+| `light_projected_cl` | client | — | Create, update, or remove a clientside ProjectedTexture -- a spotlight test-light rig, the projected-light sibling of debug_draw. |
 | `lua_run_cl` | client | `unsafe` | Compile and execute Lua source in this realm. |
 | `lua_run_sv` | server | `unsafe` | Compile and execute Lua source in this realm. |
 | `model_info_cl` | client | — | Structured info about a model ASSET without spawning a prop -- read straight from the model file via util.GetModelInfo (no entity, no spawn), so it is synchronous and realm-identical. |
