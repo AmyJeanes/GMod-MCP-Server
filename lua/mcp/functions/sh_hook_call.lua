@@ -44,6 +44,7 @@ MCP:AddFunction({
         required = { "name" },
     },
     requires = { "unsafe" },
+    ---@param args table
     handler = function(args)
         args = args or {}
         if type(args.name) ~= "string" or args.name == "" then

@@ -78,6 +78,7 @@ MCP:AddFunction({
         },
         required = { "start" },
     },
+    ---@param args table
     handler = function(args)
         args = args or {}
 

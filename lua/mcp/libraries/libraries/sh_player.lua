@@ -89,6 +89,7 @@ function MCP.player.Resolve(args, opts)
             if p:Nick() == want then return { p } end
         end
         local lw = string.lower(want)
+        ---@type Player[]
         local matches = {}
         for _, p in ipairs(player.GetAll()) do
             if string.find(string.lower(p:Nick()), lw, 1, true) then matches[#matches + 1] = p end

@@ -116,6 +116,7 @@ MCP:AddFunction({
             },
         },
     },
+    ---@param args table
     handler = function(args)
         args = args or {}
 

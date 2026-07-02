@@ -154,7 +154,7 @@ function MCP.util.BitList(prefix)
     if cached then return cached end
     local list = {}
     for k, v in pairs(_G) do
-        if isnumber(v) and v > 0 and bit.band(v, v - 1) == 0 and string.sub(k, 1, #prefix) == prefix then
+        if isnumber(v) and v > 0 and bit.band(v --[[@as number]], v - 1) == 0 and string.sub(k, 1, #prefix) == prefix then
             list[#list + 1] = { bit = v, name = k }
         end
     end

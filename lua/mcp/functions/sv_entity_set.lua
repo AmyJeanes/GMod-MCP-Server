@@ -122,6 +122,7 @@ MCP:AddFunction({
         },
         required = { "index" },
     },
+    ---@param args table
     handler = function(args, ctx)
         args = args or {}
 

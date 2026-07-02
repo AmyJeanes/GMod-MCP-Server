@@ -113,6 +113,7 @@ MCP:AddFunction({
         if not sampleFn then return { ok = false, error = "`sample` compile error: " .. serr } end
 
         -- Compile the optional snippets, each with a precise chunk name for runtime errors.
+        ---@type table<string, function>
         local optional = {}
         for _, spec in ipairs({
             { key = "stop", name = "mcp_debug_stop" },

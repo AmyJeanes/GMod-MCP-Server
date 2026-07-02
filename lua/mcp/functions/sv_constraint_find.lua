@@ -20,6 +20,7 @@ MCP:AddFunction({
         },
         required = { "entindex" },
     },
+    ---@param args table
     handler = function(args)
         args = args or {}
         if not isnumber(args.entindex) then
