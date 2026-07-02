@@ -71,6 +71,8 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `debug_clear_cl` | client | — | Remove every hook the debug_* tools installed in this realm -- debug_record sampling hooks and (later) debug_draw render hooks, all under the `mcp_debug_` id namespace. |
 | `debug_clear_sv` | server | — | Remove every hook the debug_* tools installed in this realm -- debug_record sampling hooks and (later) debug_draw render hooks, all under the `mcp_debug_` id namespace. |
 | `debug_draw_cl` | client | `unsafe` | Install a persistent client-side render hook that runs your draw Lua every frame, for visual debugging you can then screenshot -- mark an entity, outline a volume, draw a path, label something on the HUD. |
+| `debug_hooks_cl` | client | — | Inspect the hook registry -- answer "did my hook register, and where is it defined?" without hand-dumping hook.GetTable(). |
+| `debug_hooks_sv` | server | — | Inspect the hook registry -- answer "did my hook register, and where is it defined?" without hand-dumping hook.GetTable(). |
 | `debug_record_cl` | client | `unsafe` | Record a value each time a hook fires, for a bounded window, then return the time series -- a managed sampling probe that owns the hook lifecycle (unique namespaced hook, duration cap, auto-remove on end/stop/error) so you never hand-roll hook.Add/poll/hook.Remove. |
 | `debug_record_sv` | server | `unsafe` | Record a value each time a hook fires, for a bounded window, then return the time series -- a managed sampling probe that owns the hook lifecycle (unique namespaced hook, duration cap, auto-remove on end/stop/error) so you never hand-roll hook.Add/poll/hook.Remove. |
 | `entity_create_sv` | server | `world_control` | Spawn one entity server-side -- Create, SetModel, SetPos, Spawn, Activate -- optionally frozen and coloured, and tagged for later cleanup by entity_remove. |
@@ -80,6 +82,10 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `entity_set_sv` | server | `world_control` | Mutate one entity's transform, render and physics state by index, then confirm. |
 | `entity_state_cl` | client | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render (incl. |
 | `entity_state_sv` | server | — | Nil-safe structured snapshot of one entity by index -- identity, transform, render (incl. |
+| `file_exists_cl` | client | — | Check whether a single path exists in the GMod virtual filesystem, and report whether it's a file or folder plus its size and modified time -- file.Exists/IsDir/Size/Time. |
+| `file_exists_sv` | server | — | Check whether a single path exists in the GMod virtual filesystem, and report whether it's a file or folder plus its size and modified time -- file.Exists/IsDir/Size/Time. |
+| `file_find_cl` | client | — | List files and folders in the GMod virtual filesystem matching a glob -- file.Find(pattern, path). |
+| `file_find_sv` | server | — | List files and folders in the GMod virtual filesystem matching a glob -- file.Find(pattern, path). |
 | `game_set_cl` | client | `world_control` | Set curated client-only game knobs, then confirm. |
 | `game_set_sv` | server | `world_control` | Set one or more curated, safe server-tuning knobs, wait for them to settle, and report the actual values. |
 | `game_state_sv` | server | — | Structured snapshot of server-wide game state in one read -- current map, gamemode, hostname, singleplayer/dedicated flags, max player slots, player/bot/human counts, a lean roster of every player (name/userid/entindex/is_bot/is_host/team -- drill into one with player_state or entity_state), a `tuning` block with the live values of game_set's knobs (gravity, timescale, phys_timescale, fakelag), and `cheats_enabled` (sv_cheats) -- which gates whether game_set's timescale/fakelag will take. |
