@@ -35,9 +35,7 @@ public sealed class LaunchTool : IHostTool
         "this tool blocks across both stages so callers don't have to poll. " +
         "Tool-dispatch convars (mcp_enable, mcp_allow_*) are FCVAR_ARCHIVE so once set they persist " +
         "across game restarts — no per-launch user step. If a convar isn't set yet, the tool times " +
-        "out with a hint naming the missing convar; otherwise it returns ready with no user input. " +
-        "Pass cheats=true to boot with sv_cheats enabled — the only programmatic way to turn it on, " +
-        "since sv_cheats is blocklisted on a running game and can't be flipped through the bridge.";
+        "out with a hint naming the missing convar; otherwise it returns ready with no user input.";
 
     public JsonElement InputSchema { get; } = HostToolHelpers.ParseSchema("""
     {
@@ -46,7 +44,6 @@ public sealed class LaunchTool : IHostTool
         "map":          { "type": "string",  "description": "Map to load (default: gm_construct). Workshop maps work — the launcher bootstraps gm_construct, waits for the workshop subscription to mount, then transitions to the target. Empty string boots to the main menu." },
         "gamemode":     { "type": "string",  "description": "Gamemode (default: sandbox)." },
         "maxplayers":   { "type": "integer", "description": "Player slots, 1-128. Omit or 1 = singleplayer (default). >1 boots a LISTEN (multiplayer) server — needed for bots, a second client, or any multiplayer-only behaviour. Fixed at launch: maxplayers can't change on a running game, so switching modes means host_close then host_launch." },
-        "cheats":       { "type": "boolean", "description": "Enable sv_cheats at launch by appending +sv_cheats 1 to the command line (default: false). sv_cheats is blocklisted from every in-game Lua/console path the bridge uses, so it CANNOT be toggled on a running game — a launch arg (or typing sv_cheats 1 in the in-game console) is the only programmatic way to bring cheats up. Needed for cheat-protected knobs like host_timescale / net_fakelag (game_set's timescale / fakelag)." },
         "console":      { "type": "boolean", "description": "Open the developer console window (default: true)." },
         "windowed":     { "type": "boolean", "description": "Force windowed (true) or fullscreen (false). Omit to keep whatever GMod has configured — that's the default and what the user usually wants." },
         "width":        { "type": "integer", "description": "Override window width. Omit to use GMod's configured resolution." },
@@ -77,7 +74,6 @@ public sealed class LaunchTool : IHostTool
         var waitTimeout = HostToolHelpers.GetInt(args, "wait_timeout_seconds", 180);
         var maxPlayers = HostToolHelpers.GetIntOrNull(args, "maxplayers");
         var background = HostToolHelpers.GetBool(args, "background", false);
-        var cheats = HostToolHelpers.GetBool(args, "cheats", false);
 
         if (maxPlayers is int requested && (requested < 1 || requested > 128))
         {
@@ -119,13 +115,6 @@ public sealed class LaunchTool : IHostTool
             argList.Add("+gamemode"); argList.Add(bootGamemode);
         }
         argList.AddRange(extra);
-        if (cheats)
-        {
-            // sv_cheats is blocklisted from every in-game Lua/console-command path, so a launch
-            // arg is the only way to bring the game up with cheats on. Set it before +map so the
-            // map loads with cheats already enabled.
-            argList.Add("+sv_cheats"); argList.Add("1");
-        }
         if (maxPlayers is int slots && slots > 1)
         {
             // maxplayers is locked at the first server init, so it must be on
