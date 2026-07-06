@@ -1,0 +1,444 @@
+-- debug_record_interactive: a player-driven front-end to the debug_record sampling core, for
+-- repros the USER must physically perform (walk a path, time a crossing, mash a seam). Where
+-- debug_record blocks on a blind fixed window the instant it fires, this shows the whole flow
+-- in-game -- a Start confirm popup, a 3-2-1 countdown, a live "REC" HUD (seconds remaining,
+-- sample count, an optional red flag counter, and a live readout of what you're measuring), then
+-- a Done / Retry gate so a botched attempt can be re-run without a round-trip to the agent.
+--
+-- Two-call, so the human's timing is unbounded (the .NET host caps a single blocking call at
+-- 60s): `debug_record_interactive` ARMS the recorder and returns immediately with a handle;
+-- `debug_record_read` collects the series once the user clicks Done (it blocks up to `wait`,
+-- else reports the current phase so the agent can poll again). Both are client-realm -- Derma
+-- and HUDPaint are clientside; the sampling core (MCP.sampler) is shared verbatim with
+-- debug_record. v1 is client-only: for cross-realm prediction bugs, have `sample` return
+-- CurTime() (the shared tick key, identical on both realms) and run a paired server ring buffer
+-- via lua_run_sv, then align the two series by CurTime.
+
+local MAX_SECONDS = 30        -- recording-window cap (matches debug_record)
+local DEFAULT_COUNTDOWN = 3   -- seconds; time to move hands to the keyboard after clicking Start
+local MAX_COUNTDOWN = 10
+local FLAGGED_CAP = 200       -- max flagged-fire context rows kept for the dump
+local DEFAULT_READ_WAIT = 45  -- debug_record_read default block, under the host's 60s ceiling
+local READ_MAX_WAIT = 55
+local RECORD_TTL = 300        -- reap a terminal (finished/cancelled) record left unread this long
+
+MCP._irec = MCP._irec or {}   -- handle -> record; one interactive recorder at a time (one screen)
+
+-- Fonts are created lazily on first arm, never at file-load -- keeps registration bare for the
+-- headless tool-list generator (which has no `surface`). Idempotent to recreate.
+local fontsReady = false
+local function ensureFonts()
+    if fontsReady then return end
+    surface.CreateFont("mcp_rec_huge", { font = "Roboto", size = 150, weight = 800 })
+    surface.CreateFont("mcp_rec_big",  { font = "Roboto", size = 34,  weight = 700 })
+    surface.CreateFont("mcp_rec_med",  { font = "Roboto", size = 26,  weight = 600 })
+    fontsReady = true
+end
+
+local function removeHooks(r)
+    hook.Remove(r.hookPoint, r.sampleId)
+    hook.Remove("Think", r.thinkId)
+    hook.Remove("HUDPaint", r.hudId)
+end
+
+-- Cancel (Start popup cancelled, or superseded by a new arm): stop the live hooks and mark the
+-- record cancelled. Left in the registry so a pending read resolves as "cancelled" rather than
+-- "unknown"; reaped later by TTL.
+local function cancelRecord(r)
+    if r.phase == "finished" or r.phase == "cancelled" then return end
+    r.phase = "cancelled"
+    r.finishedAt = RealTime()
+    removeHooks(r)
+    if IsValid(r.query) then r.query:Remove() end
+    notification.AddLegacy("Recording cancelled", NOTIFY_ERROR, 3)
+end
+
+-- User clicked Done: snapshot this attempt's series, stop the live hooks, keep the record for
+-- debug_record_read to collect.
+local function finishRecord(r)
+    if not r.sampler then return end
+    r.result = r.sampler:Result()
+    r.result.flags = r.flags
+    r.result.flagged = r.flagged
+    if r.flags > #r.flagged then r.result.flagged_truncated = true end
+    r.result.attempts = r.attempts
+    r.phase = "finished"
+    r.finishedAt = RealTime()
+    removeHooks(r)
+    notification.AddLegacy("Recording accepted (" .. #r.sampler.buffer .. " samples) -- returned to agent", NOTIFY_GENERIC, 4)
+end
+
+-- User clicked Retry: discard this attempt and re-run the countdown -> record cycle. Fresh
+-- buffers/state happen at the countdown -> recording boundary in the Think tick.
+local function retryRecord(r)
+    r.armedAt = SysTime()
+    r.phase = "countdown"
+end
+
+local function openReview(r)
+    local n = #r.sampler.buffer
+    local head
+    if r.sampler.doneReason == "error" then
+        -- A crashing sample/stop ends recording at once; say so, or the popup looks like a
+        -- mysterious instant exit. The full error still rides back through debug_record_read.
+        head = "SAMPLE ERROR -- recording aborted after " .. n .. " samples:\n" .. tostring(r.sampler.doneErr)
+    else
+        local flagLine = r.flagFn and ("\n" .. r.flags .. " flags.") or ""
+        head = "Recorded " .. n .. " samples." .. flagLine
+    end
+    r.query = Derma_Query(
+        head .. "\n\nAccept this recording, or retry?",
+        r.title or "MCP interactive recorder",
+        "Done",  function() finishRecord(r) end,
+        "Retry", function() retryRecord(r) end)
+end
+
+-- Reap terminal records left unread past their TTL, and cancel any still-live recorder (only one
+-- makes sense on a single screen) before a new arm.
+local function sweep()
+    for _, r in pairs(MCP._irec) do
+        local terminal = r.phase == "finished" or r.phase == "cancelled"
+        if terminal then
+            if r.finishedAt and (RealTime() - r.finishedAt) > RECORD_TTL then
+                removeHooks(r)
+                MCP._irec[r.handle] = nil
+            end
+        else
+            cancelRecord(r)
+        end
+    end
+end
+
+MCP:AddFunction({
+    id = "debug_record_interactive",
+    requires = { "unsafe" },
+    description = "ARM an on-screen, player-driven recorder for a repro the user must physically perform (walk a path, time a portal crossing, mash a seam) -- the interactive sibling of debug_record. Returns a `handle` IMMEDIATELY; the whole flow then plays out in-game: a Start/Cancel confirm popup, a 3-2-1 countdown (time to grab the keyboard), a live \"REC\" HUD showing seconds-remaining + sample count + an optional red flag counter + a live readout of the value you're measuring, then a Done/Retry gate so a botched attempt is re-run in-game with no round-trip. Collect the series afterwards with debug_record_read (it blocks until the user clicks Done). Two-call by design: the human's timing on the popup is unbounded, and a single blocking tool call is capped at 60s. The sampling core is shared verbatim with debug_record, so all its args behave identically: `hook` is the event to sample (client realm: CreateMove, SetupMove, Think, HUDPaint, PreDrawOpaqueRenderables, any hook name); `sample` is a Lua function body receiving a shared `state` table then the hook args as `...`, returning the value to record (number/string/table; return nothing to skip a fire); `stop`, `init`, `interval`, `stats`, `histogram`, `max_samples` all match debug_record. `seconds` is the recording window AFTER the countdown (max 30). Interactive-only knobs: `countdown` (default 3; 0 skips it), `confirm` (default true; false skips the Start popup and begins the countdown at once, for an agent-driven \"go now\"), `title` and `ready_text` (the popup title and the on-screen \"get ready\" instruction -- tell the user what to do, e.g. \"WASD only, no mouse\"), `flag` (an extra Lua body like `sample`; every fire it returns truthy increments a live red flag counter and its return is stored as that fire's context in `flagged`, for watching pass/fail happen in real time -- e.g. \"angle flipped this crossing\"), and `hud` (a Lua body returning a short string rendered live under the REC bar each fire; omit to show the last sampled value). CLIENT REALM ONLY (Derma/HUD are clientside). For a cross-realm prediction bug, have `sample` return CurTime() -- the shared tick key, identical on both realms for the same tick -- and run a paired server ring buffer via lua_run_sv hooking the same event, then align the two series by CurTime; IsFirstTimePredicted() and the realm are also worth returning from `sample` for prediction debugging. (A native paired server capture is planned for v2.) Rides `unsafe` because `sample`/`flag`/`hud`/`stop`/`init` are caller Lua.",
+    -- Returns immediately after arming, so the default request timeout is plenty.
+    schema = {
+        type = "object",
+        properties = {
+            hook = {
+                type = "string",
+                description = "Hook event to sample each fire (client realm, e.g. \"CreateMove\", \"SetupMove\", \"Think\", \"HUDPaint\"). Any name; a never-firing hook just yields an empty series.",
+            },
+            sample = {
+                type = "string",
+                description = "Lua function body run each fire; receives the shared `state` table then the hook's arguments as `...`. `return` a value to record (number/string/table); return nothing to skip that fire. For prediction bugs, return e.g. CurTime()/IsFirstTimePredicted() so the series aligns cross-realm.",
+            },
+            seconds = {
+                type = "number",
+                description = "Recording window in seconds AFTER the countdown (max 30). Also the hard safety cap.",
+            },
+            countdown = {
+                type = "number",
+                description = "Countdown seconds shown before recording (default 3; 0 skips it). Gives the user time to move hands to the keys after clicking Start.",
+            },
+            confirm = {
+                type = "boolean",
+                description = "Show the Start/Cancel popup so the user begins when ready (default true). false skips it and starts the countdown immediately (agent-driven \"go now\").",
+            },
+            title = {
+                type = "string",
+                description = "Title for the confirm and review popups (e.g. \"Portal crossing recorder\").",
+            },
+            ready_text = {
+                type = "string",
+                description = "The \"get ready\" instruction shown in the popup and during the countdown -- tell the user exactly what to do, e.g. \"MOVEMENT KEYS ONLY - no mouse\".",
+            },
+            flag = {
+                type = "string",
+                description = "Optional Lua body (like `sample`: `state` then the hook args) evaluated every fire; a truthy return increments a live red \"flags: N\" counter and its value is stored as that fire's context in the returned `flagged` list. For live pass/fail detection (e.g. an angle flip).",
+            },
+            hud = {
+                type = "string",
+                description = "Optional Lua body (like `sample`) returning a short string rendered live under the REC bar each fire -- the readout of what you're measuring. Omit to display the last sampled value.",
+            },
+            stop = {
+                type = "string",
+                description = "Optional Lua body (`state` + the hook args) checked every fire; recording ends early when it returns truthy.",
+            },
+            init = {
+                type = "string",
+                description = "Optional Lua body (with the shared `state` table) run once at the start of each recording attempt (including retries) to seed state.",
+            },
+            interval = {
+                type = "number",
+                description = "Throttle: minimum seconds between samples. Default 0 (record every fire). `stop` and `flag` are still evaluated every fire.",
+            },
+            stats = {
+                type = "boolean",
+                description = "When true, also return an `aggregate` block (numeric_count/min/max/sum/avg) over the numeric samples at full resolution.",
+            },
+            histogram = {
+                type = "boolean",
+                description = "When true, also return a `histogram` -- a distinct-value tally of the samples, for counting categorical outcomes (have `sample` return a short string key).",
+            },
+            max_samples = {
+                type = "integer", minimum = 2, maximum = 500,
+                description = "Max points in the returned series (default 100). More are recorded and evenly downsampled on return.",
+            },
+        },
+        required = { "hook", "sample", "seconds" },
+    },
+    ---@param args table
+    handler = function(args, ctx)
+        args = args or {}
+
+        if type(args.hook) ~= "string" or args.hook == "" then
+            return { ok = false, error = "`hook` must be a non-empty hook event name (e.g. \"CreateMove\", \"SetupMove\")" }
+        end
+        if type(args.sample) ~= "string" or args.sample == "" then
+            return { ok = false, error = "`sample` must be a non-empty Lua snippet (use `return` to record a value; return nothing to skip a fire)" }
+        end
+        local seconds = tonumber(args.seconds)
+        if not seconds then return { ok = false, error = "`seconds` is required (the recording window and safety cap)" } end
+        seconds = math.Clamp(seconds, 0.05, MAX_SECONDS)
+
+        local countdown = math.Clamp(tonumber(args.countdown) or DEFAULT_COUNTDOWN, 0, MAX_COUNTDOWN)
+        local confirm = args.confirm == nil or (args.confirm and true or false)
+
+        local sampleFn, serr = MCP.sampler.Compile(args.sample, "mcp_irec_sample")
+        if not sampleFn then return { ok = false, error = "`sample` compile error: " .. serr } end
+
+        -- Compile every optional snippet up front so a typo fails the arm, not a later fire.
+        ---@type table<string, function>
+        local compiled = {}
+        for _, spec in ipairs({
+            { key = "stop", name = "mcp_irec_stop" },
+            { key = "init", name = "mcp_irec_init" },
+            { key = "flag", name = "mcp_irec_flag" },
+            { key = "hud",  name = "mcp_irec_hud" },
+        }) do
+            local src = args[spec.key]
+            if src ~= nil then
+                if type(src) ~= "string" then return { ok = false, error = "`" .. spec.key .. "` must be a Lua string" } end
+                local fn, e = MCP.sampler.Compile(src, spec.name)
+                if not fn then return { ok = false, error = "`" .. spec.key .. "` compile error: " .. e } end
+                compiled[spec.key] = fn
+            end
+        end
+
+        ensureFonts()
+        sweep() -- reap old records + cancel any still-live recorder before this one
+
+        local sampler = MCP.sampler.New({
+            sample = sampleFn,
+            stop = compiled.stop,
+            interval = args.interval,
+            max_samples = args.max_samples,
+            want_stats = args.stats,
+            want_histogram = args.histogram,
+        })
+
+        MCP._irecSeq = (MCP._irecSeq or 0) + 1
+        local handle = "mcp_irec_" .. MCP._irecSeq
+        local r = {
+            handle = handle,
+            phase = "arming",
+            sampler = sampler,
+            initFn = compiled.init,
+            flagFn = compiled.flag,
+            hudFn = compiled.hud,
+            seconds = seconds,
+            countdown = countdown,
+            title = type(args.title) == "string" and args.title or nil,
+            readyText = type(args.ready_text) == "string" and args.ready_text or nil,
+            hookPoint = args.hook,
+            sampleId = "mcp_irec_s_" .. MCP._irecSeq,
+            thinkId = "mcp_irec_t_" .. MCP._irecSeq,
+            hudId = "mcp_irec_h_" .. MCP._irecSeq,
+            flags = 0,
+            flagged = {},
+            attempts = 0,
+            readout = nil,
+        }
+        MCP._irec[handle] = r
+
+        -- Sample hook: only active while recording. Records via the shared sampler, then updates
+        -- the live flag counter and HUD readout off the freshly-updated state.
+        hook.Add(r.hookPoint, r.sampleId, function(...)
+            if r.phase ~= "recording" then return end
+            local reason = r.sampler:Fire(...)
+            if reason ~= "error" then
+                if r.flagFn then
+                    local ok, res = pcall(r.flagFn, r.sampler.state, ...)
+                    if ok and res then
+                        r.flags = r.flags + 1
+                        if #r.flagged < FLAGGED_CAP then
+                            r.flagged[#r.flagged + 1] = {
+                                t = math.Round(RealTime() - r.sampler.start, 3),
+                                v = MCP.util.Serialize(res, { max_depth = 4, max_nodes = 40 }),
+                            }
+                        end
+                    end
+                end
+                if r.hudFn then
+                    local ok, txt = pcall(r.hudFn, r.sampler.state, ...)
+                    if ok and txt ~= nil then r.readout = tostring(txt) end
+                elseif r.sampler.lastValue ~= nil then
+                    r.readout = tostring(r.sampler.lastValue)
+                end
+            end
+            if reason then r.recEnd = reason end
+            -- Never return a value from the hook: don't perturb movement hooks.
+        end)
+
+        -- Phase machine: countdown -> recording -> review. Wall-clock timing on SysTime (CurTime
+        -- misbehaves inside prediction). Idempotent transitions; the review popup pops once.
+        hook.Add("Think", r.thinkId, function()
+            if r.phase == "countdown" then
+                if SysTime() - r.armedAt >= r.countdown then
+                    r.sampler:Reset()
+                    r.sampler.state = {}
+                    if r.initFn then pcall(r.initFn, r.sampler.state) end
+                    r.flags = 0
+                    r.flagged = {}
+                    r.readout = nil
+                    r.recEnd = nil
+                    r.attempts = r.attempts + 1
+                    r.recStartedAt = SysTime()
+                    r.phase = "recording"
+                end
+            elseif r.phase == "recording" then
+                if r.recEnd or (SysTime() - r.recStartedAt >= r.seconds) then
+                    r.phase = "review"
+                    openReview(r)
+                end
+            end
+        end)
+
+        -- HUD: draws off the record's phase + timers. Nothing during arming/review (Derma owns
+        -- those) or after finish.
+        hook.Add("HUDPaint", r.hudId, function()
+            local h, cx = ScrH(), ScrW() * 0.5
+            if r.phase == "countdown" then
+                local rem = math.ceil(r.countdown - (SysTime() - r.armedAt))
+                draw.SimpleText(r.readyText or "GET READY", "mcp_rec_med", cx, h * 0.30, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                draw.SimpleText(math.max(rem, 0), "mcp_rec_huge", cx, h * 0.5, Color(255, 220, 0), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            elseif r.phase == "recording" then
+                local rem = math.ceil(r.seconds - (SysTime() - r.recStartedAt))
+                local n = #r.sampler.buffer
+                surface.SetDrawColor(190, 0, 0, 235)
+                surface.DrawRect(cx - 175, h * 0.06, 350, 58)
+                draw.SimpleText("\226\151\143 REC  " .. math.max(rem, 0) .. "s   [" .. n .. "]", "mcp_rec_med", cx, h * 0.06 + 29, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                local y = h * 0.06 + 80
+                if r.flagFn then
+                    local fc = r.flags > 0 and Color(255, 60, 60) or Color(0, 255, 120)
+                    draw.SimpleText("flags: " .. r.flags, "mcp_rec_big", cx, y, fc, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    y = y + 44
+                end
+                if r.readout then
+                    draw.SimpleText(r.readout, "mcp_rec_med", cx, y, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+            end
+        end)
+
+        if confirm then
+            r.phase = "arming"
+            local body = (r.readyText and (r.readyText .. "\n\n") or "") ..
+                countdown .. "s countdown, then records " .. seconds .. "s."
+            r.query = Derma_Query(body, r.title or "MCP interactive recorder",
+                "Start",  function() r.armedAt = SysTime() r.phase = "countdown" end,
+                "Cancel", function() cancelRecord(r) end)
+        else
+            r.armedAt = SysTime()
+            r.phase = "countdown"
+        end
+
+        return {
+            ok = true,
+            realm = MCP.util.RealmName(),
+            handle = handle,
+            status = r.phase,
+            seconds = seconds,
+            countdown = countdown,
+            note = "Interactive recorder shown in-game. " ..
+                (confirm and "The user clicks Start when ready, " or "Countdown starting now; ") ..
+                "then a " .. countdown .. "s countdown runs and it records for " .. seconds ..
+                "s while they perform the repro, then they click Done (accept) or Retry (re-attempt). " ..
+                "Call debug_record_read with this handle to collect the series -- it blocks until Done.",
+        }
+    end,
+})
+
+-- Collect a finished record: build the response from the snapshot and drop the record.
+local function collect(r)
+    MCP._irec[r.handle] = nil
+    local res = {
+        ok = r.result.reason ~= "error",
+        status = "ok",
+        realm = MCP.util.RealmName(),
+        handle = r.handle,
+        hook = r.hookPoint,
+    }
+    for k, v in pairs(r.result) do res[k] = v end
+    return res
+end
+
+MCP:AddFunction({
+    id = "debug_record_read",
+    description = "Collect the series from a debug_record_interactive recorder. Pass the `handle` it returned. Blocks up to `wait` seconds for the user to click Done, then returns the recorded series in the same shape as debug_record (samples, plus aggregate/histogram when requested) with the interactive extras `flags`, `flagged` (per-flag context), and `attempts`. If the user is still setting up or recording when `wait` elapses, returns status \"pending\" with the current `phase` and sample count so far -- just call again to keep waiting (the user's timing is unbounded, and they may Retry as many times as they like before accepting). Returns status \"cancelled\" if they dismissed the popup. Ungated: it only reads a buffer that debug_record_interactive (which is `unsafe`-gated) already captured.",
+    timeout = READ_MAX_WAIT + 3,
+    schema = {
+        type = "object",
+        properties = {
+            handle = {
+                type = "string",
+                description = "The recorder handle returned by debug_record_interactive.",
+            },
+            wait = {
+                type = "number",
+                description = "Max seconds to block waiting for the user to click Done (default 45, max 55). 0 polls once and returns the current phase immediately.",
+            },
+        },
+        required = { "handle" },
+    },
+    handler = function(args, ctx)
+        args = args or {}
+        local handle = args.handle
+        if type(handle) ~= "string" or handle == "" then
+            return { ok = false, error = "`handle` is required (the value returned by debug_record_interactive)" }
+        end
+        local r = MCP._irec[handle]
+        if not r then
+            return { ok = false, error = "unknown or expired recorder handle: " .. handle }
+        end
+
+        local function terminalResponse()
+            if r.phase == "finished" then return collect(r) end
+            MCP._irec[handle] = nil
+            return { ok = true, status = "cancelled", realm = MCP.util.RealmName(), handle = handle }
+        end
+        local function pendingResponse()
+            return {
+                ok = true,
+                status = "pending",
+                realm = MCP.util.RealmName(),
+                handle = handle,
+                phase = r.phase,
+                attempts = r.attempts,
+                sample_count = r.sampler and #r.sampler.buffer or 0,
+                flags = r.flags or 0,
+                note = "The user hasn't accepted a recording yet (phase: " .. r.phase .. "). Call debug_record_read again to keep waiting.",
+            }
+        end
+
+        if r.phase == "finished" or r.phase == "cancelled" then return terminalResponse() end
+
+        local wait = math.Clamp(tonumber(args.wait) or DEFAULT_READ_WAIT, 0, READ_MAX_WAIT)
+        if wait <= 0 then return pendingResponse() end
+
+        MCP:RunFor({
+            seconds = wait,
+            stop = function() return r.phase == "finished" or r.phase == "cancelled" end,
+        }, function()
+            if r.phase == "finished" or r.phase == "cancelled" then
+                ctx.respond(terminalResponse())
+            else
+                ctx.respond(pendingResponse())
+            end
+        end)
+
+        return ctx.deferred
+    end,
+})

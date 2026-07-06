@@ -13,32 +13,12 @@
 -- carry data frame-to-frame (e.g. state.lastz for teleport-detect). `init` seeds it before the
 -- hook installs; `trigger` runs once right after, so you can arm the recorder and fire the thing
 -- you want to record in one atomic call (no round-trip gap where the event slips past).
+--
+-- The per-fire recording / downsample / stats-histogram logic lives in MCP.sampler
+-- (libraries/sh_sampler.lua), shared with the interactive on-screen recorder; this handler owns
+-- only the hook install, the RunFor duration backstop, and the response envelope.
 
 local MAX_SECONDS = 30      -- window hard cap; keep <= the per-tool request timeout below
-local RAW_CEILING = 5000    -- hard memory cap on raw samples, independent of max_samples
-local SAMPLE_DEPTH = 4      -- per-sample serialization caps so one fat sample can't blow up
-local SAMPLE_NODES = 80     -- (the whole-response node cap is the ultimate backstop)
-local HIST_CAP = 100        -- max distinct values returned in the histogram tally
-
--- Compile a caller snippet as a function body receiving the shared `state` table, then the
--- hook's args as `...`. Returns the function, or nil + the compile error string.
-local function compileBody(src, name)
-    local chunk = CompileString("return function(state, ...)\n" .. src .. "\nend", name, false)
-    if type(chunk) == "string" then return nil, chunk end
-    return chunk()
-end
-
--- Evenly downsample to `target` points, always keeping the first and last. Returns the
--- (possibly unchanged) array and whether it was downsampled.
-local function downsample(arr, target)
-    local n = #arr
-    if n <= target then return arr, false end
-    local out = {}
-    for i = 0, target - 1 do
-        out[#out + 1] = arr[math.floor(1 + i * (n - 1) / (target - 1) + 0.5)]
-    end
-    return out, true
-end
 
 MCP:AddFunction({
     id = "debug_record",
@@ -92,6 +72,7 @@ MCP:AddFunction({
         },
         required = { "hook", "sample", "seconds" },
     },
+    ---@param args table
     handler = function(args, ctx)
         args = args or {}
 
@@ -104,12 +85,8 @@ MCP:AddFunction({
         local seconds = tonumber(args.seconds)
         if not seconds then return { ok = false, error = "`seconds` is required (the recording window and safety cap)" } end
         seconds = math.Clamp(seconds, 0.05, MAX_SECONDS)
-        local interval = math.max(tonumber(args.interval) or 0, 0)
-        local maxSamples = math.Clamp(math.floor(tonumber(args.max_samples) or 100), 2, 500)
-        local wantStats = args.stats and true or false
-        local wantHistogram = args.histogram and true or false
 
-        local sampleFn, serr = compileBody(args.sample, "mcp_debug_sample")
+        local sampleFn, serr = MCP.sampler.Compile(args.sample, "mcp_debug_sample")
         if not sampleFn then return { ok = false, error = "`sample` compile error: " .. serr } end
 
         -- Compile the optional snippets, each with a precise chunk name for runtime errors.
@@ -123,17 +100,25 @@ MCP:AddFunction({
             local src = args[spec.key]
             if src ~= nil then
                 if type(src) ~= "string" then return { ok = false, error = "`" .. spec.key .. "` must be a Lua string" } end
-                local fn, e = compileBody(src, spec.name)
+                local fn, e = MCP.sampler.Compile(src, spec.name)
                 if not fn then return { ok = false, error = "`" .. spec.key .. "` compile error: " .. e } end
                 optional[spec.key] = fn
             end
         end
         local stopFn, initFn, triggerFn = optional.stop, optional.init, optional.trigger
 
-        -- Shared across init/sample/stop/trigger so a probe can carry state between fires.
-        local state = {}
+        local sampler = MCP.sampler.New({
+            sample = sampleFn,
+            stop = stopFn,
+            interval = args.interval,
+            max_samples = args.max_samples,
+            want_stats = args.stats,
+            want_histogram = args.histogram,
+        })
+
+        -- `state` (sampler.state) is shared across init/sample/stop/trigger.
         if initFn then
-            local iok, ierr = pcall(initFn, state)
+            local iok, ierr = pcall(initFn, sampler.state)
             if not iok then return { ok = false, error = "`init` error: " .. tostring(ierr) } end
         end
 
@@ -141,62 +126,15 @@ MCP:AddFunction({
         MCP._debugSeq = (MCP._debugSeq or 0) + 1
         local hookId = "mcp_debug_" .. MCP._debugSeq
 
-        local buffer = {}
-        local start = RealTime()
-        local lastSampleT
-        local doneReason, doneErr
-
-        -- Full-resolution stats (accumulated as recorded, so they survive downsampling).
-        local agg = { numeric = 0, sum = 0, min = nil, max = nil }
-        -- Full-resolution categorical tally (histogram), likewise pre-downsample.
-        local tally, tallyDistinct = {}, 0
-
         hook.Add(hookPoint, hookId, function(...)
-            if doneReason then return end -- finished; await RunFor teardown
-            local now = RealTime()
-
-            -- Stop is checked every fire so an event is caught promptly; only sampling
-            -- is throttled by `interval`. The stop moment still records a final sample.
-            local stopHit = false
-            if stopFn then
-                local sok, sres = pcall(stopFn, state, ...)
-                if not sok then doneReason, doneErr = "error", tostring(sres) return end
-                stopHit = sres and true or false
-            end
-
-            local due = interval <= 0 or not lastSampleT or (now - lastSampleT) >= interval
-            if stopHit or due then
-                local ok, val = pcall(sampleFn, state, ...)
-                if not ok then doneReason, doneErr = "error", tostring(val) return end
-                -- nil return == "skip this fire"; the throttle only advances on a real record.
-                if val ~= nil then
-                    lastSampleT = now
-                    buffer[#buffer + 1] = {
-                        t = math.Round(now - start, 3),
-                        v = MCP.util.Serialize(val, { max_depth = SAMPLE_DEPTH, max_nodes = SAMPLE_NODES }),
-                    }
-                    if isnumber(val) then
-                        agg.numeric = agg.numeric + 1
-                        agg.sum = agg.sum + val
-                        if not agg.min or val < agg.min then agg.min = val end
-                        if not agg.max or val > agg.max then agg.max = val end
-                    end
-                    if wantHistogram then
-                        local key = isstring(val) and val or tostring(val)
-                        if tally[key] == nil then tallyDistinct = tallyDistinct + 1 end
-                        tally[key] = (tally[key] or 0) + 1
-                    end
-                    if #buffer >= RAW_CEILING then doneReason = "overflow" return end
-                end
-            end
-
+            if sampler.doneReason then return end -- finished; await RunFor teardown
+            sampler:Fire(...)
             -- Never return a value from the hook: don't perturb CreateMove/StartCommand etc.
-            if stopHit then doneReason = "stop" end
         end)
 
         -- Fire-after-install: the hook is already live, so anything trigger causes is recorded.
         if triggerFn then
-            local tok, terr = pcall(triggerFn, state)
+            local tok, terr = pcall(triggerFn, sampler.state)
             if not tok then
                 hook.Remove(hookPoint, hookId)
                 return { ok = false, error = "`trigger` error: " .. tostring(terr) }
@@ -205,48 +143,18 @@ MCP:AddFunction({
 
         MCP:RunFor({
             seconds = seconds,
-            stop = function() return doneReason ~= nil end,
+            stop = function() return sampler.doneReason ~= nil end,
         }, function(r)
             hook.Remove(hookPoint, hookId)
-            local reason = doneReason or "duration"
-            local samples, down = downsample(buffer, maxSamples)
+            local block = sampler:Result()
+            ---@type table
             local result = {
-                ok = reason ~= "error",
+                ok = block.reason ~= "error",
                 realm = MCP.util.RealmName(),
                 hook = hookPoint,
-                reason = reason,
                 seconds_elapsed = math.Round(r.elapsed, 3),
-                sample_count = #buffer,
-                returned = #samples,
-                downsampled = down,
-                samples = samples,
             }
-            if wantStats then
-                result.aggregate = {
-                    numeric_count = agg.numeric,
-                    min = agg.min,
-                    max = agg.max,
-                    sum = agg.numeric > 0 and math.Round(agg.sum, 4) or nil,
-                    avg = agg.numeric > 0 and math.Round(agg.sum / agg.numeric, 4) or nil,
-                }
-            end
-            if wantHistogram then
-                local rows = {}
-                for k, c in pairs(tally) do rows[#rows + 1] = { value = k, count = c } end
-                table.sort(rows, function(a, b)
-                    if a.count ~= b.count then return a.count > b.count end
-                    return a.value < b.value
-                end)
-                if #rows > HIST_CAP then
-                    local trimmed = {}
-                    for i = 1, HIST_CAP do trimmed[i] = rows[i] end
-                    rows = trimmed
-                    result.histogram_truncated = true
-                end
-                result.histogram = rows
-                result.distinct_count = tallyDistinct
-            end
-            if doneErr then result.error = doneErr end
+            for k, v in pairs(block) do result[k] = v end
             ctx.respond(result)
         end)
 
