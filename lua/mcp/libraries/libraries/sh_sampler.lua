@@ -174,6 +174,14 @@ function Sampler:Result()
         downsampled = down,
         samples = samples,
     }
+    -- Decimate-on-full compacts the whole buffer uniformly each time it fills, so the final stride
+    -- describes the WHOLE buffer's density: rows are ~1-in-decim_stride of the actual fires. Surface
+    -- it (like `downsampled`) so a reader of a high-frequency capture doesn't mistake the reduced
+    -- row spacing for the true fire cadence.
+    if self.decimStride > 1 then
+        out.raw_decimated = true
+        out.decim_stride = self.decimStride
+    end
     if self.wantStats then
         local a = self.agg
         out.aggregate = {
