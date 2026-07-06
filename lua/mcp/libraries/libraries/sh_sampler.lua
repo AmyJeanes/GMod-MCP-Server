@@ -37,11 +37,28 @@ function MCP.sampler.Downsample(arr, target)
     return out, true
 end
 
+-- Compact an array to every 2nd element in place (1,3,5,...), halving its length. Used by the
+-- decimate-on-full path to keep a full time window under the raw ceiling at uniform resolution.
+local function compactHalf(arr)
+    local n = #arr
+    local w = 0
+    for i = 1, n, 2 do
+        w = w + 1
+        arr[w] = arr[i]
+    end
+    for i = w + 1, n do arr[i] = nil end
+end
+
 local Sampler = {}
 Sampler.__index = Sampler
 
 -- opts: { sample (fn, required), stop (fn?), interval?, max_samples?, want_stats?, want_histogram?,
---         raw_ceiling?, sample_depth?, sample_nodes?, hist_cap? }
+--         tag_curtime?, decimate_on_full?, raw_ceiling?, sample_depth?, sample_nodes?, hist_cap? }
+-- decimate_on_full: when the raw buffer fills, halve it + double the sampling stride and keep going
+-- (a time-bounded recorder covers its WHOLE window at reduced resolution) instead of ending with
+-- reason "overflow". Off by default, so debug_record's overflow behaviour is unchanged.
+-- tag_curtime adds `ct = CurTime()` to each row -- the shared tick clock, so two samplers on
+-- different realms recording the same window line up on `ct` (the cross-realm alignment key).
 ---@param opts table
 function MCP.sampler.New(opts)
     opts = opts or {}
@@ -52,6 +69,8 @@ function MCP.sampler.New(opts)
         maxSamples = math.Clamp(math.floor(tonumber(opts.max_samples) or 100), 2, 500),
         wantStats = opts.want_stats and true or false,
         wantHistogram = opts.want_histogram and true or false,
+        tagCurtime = opts.tag_curtime and true or false,
+        decimateOnFull = opts.decimate_on_full and true or false,
         rawCeiling = tonumber(opts.raw_ceiling) or DEFAULT_RAW_CEILING,
         sampleDepth = tonumber(opts.sample_depth) or DEFAULT_SAMPLE_DEPTH,
         sampleNodes = tonumber(opts.sample_nodes) or DEFAULT_SAMPLE_NODES,
@@ -75,6 +94,8 @@ function Sampler:Reset()
     self.agg = { numeric = 0, sum = 0, min = nil, max = nil }
     self.tally = {}
     self.tallyDistinct = 0
+    self.decimStride = 1 -- append 1-in-N to the buffer; grows as decimate-on-full compacts
+    self.decimPhase = 0
 end
 
 -- Process one hook fire. Stop is checked every fire so an event is caught promptly; only
@@ -99,10 +120,8 @@ function Sampler:Fire(...)
         if val ~= nil then
             self.lastSampleT = now
             self.lastValue = val
-            self.buffer[#self.buffer + 1] = {
-                t = math.Round(now - self.start, 3),
-                v = MCP.util.Serialize(val, { max_depth = self.sampleDepth, max_nodes = self.sampleNodes }),
-            }
+            -- Stats/histogram accumulate on EVERY sampled value (full resolution), independent of
+            -- the buffer decimation below -- so the true min/max and tallies survive.
             if isnumber(val) then
                 local a = self.agg
                 a.numeric = a.numeric + 1
@@ -115,7 +134,27 @@ function Sampler:Fire(...)
                 if self.tally[key] == nil then self.tallyDistinct = self.tallyDistinct + 1 end
                 self.tally[key] = (self.tally[key] or 0) + 1
             end
-            if #self.buffer >= self.rawCeiling then self.doneReason = "overflow" return self.doneReason end
+            -- Append 1-in-`decimStride` to the raw buffer. When it fills, `overflow` ends recording
+            -- (default) OR decimate-on-full halves it + doubles the stride and keeps going, so a
+            -- time-bounded recorder covers its whole window instead of ending short.
+            self.decimPhase = self.decimPhase + 1
+            if self.decimPhase >= self.decimStride then
+                self.decimPhase = 0
+                local row = {
+                    t = math.Round(now - self.start, 3),
+                    v = MCP.util.Serialize(val, { max_depth = self.sampleDepth, max_nodes = self.sampleNodes }),
+                }
+                if self.tagCurtime then row.ct = math.Round(CurTime(), 3) end
+                self.buffer[#self.buffer + 1] = row
+                if #self.buffer >= self.rawCeiling then
+                    if self.decimateOnFull then
+                        compactHalf(self.buffer)
+                        self.decimStride = self.decimStride * 2
+                    else
+                        self.doneReason = "overflow" return self.doneReason
+                    end
+                end
+            end
         end
     end
 
