@@ -38,6 +38,14 @@ local function sendGo(r)
     end
 end
 
+-- REC timer readout: whole seconds while >10s remain, one decimal in the final 10s (a smoother,
+-- more precise close-out that visibly reaches 0.0).
+local function fmtRemaining(remaining)
+    remaining = math.max(remaining, 0)
+    if remaining >= 10 then return math.ceil(remaining) .. "s" end
+    return string.format("%.1fs", remaining)
+end
+
 -- Fonts are created lazily on first arm, never at file-load -- keeps registration bare for the
 -- headless tool-list generator (which has no `surface`). Idempotent to recreate.
 local fontsReady = false
@@ -364,12 +372,12 @@ MCP:AddFunction({
                 draw.SimpleText(r.readyText or "GET READY", "mcp_rec_med", cx, h * 0.30, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 draw.SimpleText(math.max(rem, 0), "mcp_rec_huge", cx, h * 0.5, Color(255, 220, 0), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
             elseif r.phase == "recording" then
-                local rem = math.ceil(r.seconds - (SysTime() - r.recStartedAt))
+                local remStr = fmtRemaining(r.seconds - (SysTime() - r.recStartedAt))
                 surface.SetDrawColor(190, 0, 0, 235)
                 surface.DrawRect(cx - 175, h * 0.06, 350, 58)
                 if r.sampler then
                     local n = #r.sampler.buffer
-                    draw.SimpleText("\226\151\143 REC  " .. math.max(rem, 0) .. "s   [" .. n .. "]", "mcp_rec_med", cx, h * 0.06 + 29, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("\226\151\143 REC  " .. remStr .. "   [" .. n .. "]", "mcp_rec_med", cx, h * 0.06 + 29, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     local y = h * 0.06 + 80
                     if r.flagFn then
                         local fc = r.flags > 0 and Color(255, 60, 60) or Color(0, 255, 120)
@@ -380,7 +388,7 @@ MCP:AddFunction({
                         draw.SimpleText(r.readout, "mcp_rec_med", cx, y, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     end
                 else
-                    draw.SimpleText("\226\151\143 REC (server)  " .. math.max(rem, 0) .. "s", "mcp_rec_med", cx, h * 0.06 + 29, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("\226\151\143 REC (server)  " .. remStr, "mcp_rec_med", cx, h * 0.06 + 29, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
             end
         end)
