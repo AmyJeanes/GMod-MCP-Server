@@ -75,6 +75,8 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `debug_hooks_cl` | client | — | Inspect the hook registry -- answer "did my hook register, and where is it defined?" without hand-dumping hook.GetTable(). |
 | `debug_hooks_sv` | server | — | Inspect the hook registry -- answer "did my hook register, and where is it defined?" without hand-dumping hook.GetTable(). |
 | `debug_record_cl` | client | `unsafe` | Record a value each time a hook fires, for a bounded window, then return the time series -- a managed sampling probe that owns the hook lifecycle (unique namespaced hook, duration cap, auto-remove on end/stop/error) so you never hand-roll hook.Add/poll/hook.Remove. |
+| `debug_record_interactive_cl` | client | `unsafe` | ARM an on-screen, player-driven recorder for a repro the user must physically perform (walk a path, time a portal crossing, mash a seam) -- the interactive sibling of debug_record. |
+| `debug_record_read_cl` | client | — | Collect the series from a debug_record_interactive recorder. |
 | `debug_record_sv` | server | `unsafe` | Record a value each time a hook fires, for a bounded window, then return the time series -- a managed sampling probe that owns the hook lifecycle (unique namespaced hook, duration cap, auto-remove on end/stop/error) so you never hand-roll hook.Add/poll/hook.Remove. |
 | `entity_create_sv` | server | `world_control` | Spawn one entity server-side -- Create, SetModel, SetPos, Spawn, Activate -- optionally frozen and coloured, and tagged for later cleanup by entity_remove. |
 | `entity_find_cl` | client | — | Find entities and return compact rows -- index, class, model, pos and distance -- instead of a raw dump. |
