@@ -17,6 +17,7 @@ local REPORT_CAP = 50 -- cap the per-entity detail list; the matched/removed cou
 
 -- Never remove a player (use bot_remove for bots) or the worldspawn. IsValid is already
 -- false for the worldspawn, but the explicit checks make the refusal legible in an error.
+---@param e Entity
 local function removable(e)
     if not IsValid(e) then return false, "is not a valid entity" end
     if e:IsPlayer() then return false, "is a player -- use bot_remove for bots" end

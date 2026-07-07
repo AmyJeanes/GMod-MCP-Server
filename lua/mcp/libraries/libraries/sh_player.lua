@@ -23,6 +23,8 @@ end
 -- allow_host (default true) -- the write tools that resolve exactly one player pass
 -- allow_all=false (player_set/player_walk), and player_walk also allow_host=false (it has
 -- no host shortcut, only entindex/name with a warning). Messages name only the permitted set.
+---@param args table
+---@param opts table?
 function MCP.player.Resolve(args, opts)
     args = args or {}
     opts = opts or {}
@@ -120,6 +122,7 @@ end
 
 -- Compact identity block echoed by every player_* tool so a caller can confirm the
 -- subject and drill into entity_state via entindex.
+---@param ply Player
 function MCP.player.Identity(ply)
     return {
         name = ply:Nick(),

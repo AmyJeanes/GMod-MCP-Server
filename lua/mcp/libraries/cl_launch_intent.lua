@@ -22,6 +22,7 @@ local SENT = false
 -- Non-workshop addons (loose `addons/` folders, gamemodes etc.) sometimes
 -- appear in engine.GetAddons() with no wsid; treat them as enabled by
 -- default — they don't have a manager toggle.
+---@param addon table
 local function isExpected(addon)
     if not addon.downloaded then return false end
     local wsid = addon.wsid

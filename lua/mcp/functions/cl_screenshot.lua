@@ -41,6 +41,7 @@ local function uniqueHookId()
     return "MCP_Screenshot_" .. tostring(SysTime()) .. "_" .. tostring(math.random(1, 1e9))
 end
 
+---@param t table
 local function parseVec3(t)
     if type(t) ~= "table" then return nil end
     local x, y, z = tonumber(t[1]), tonumber(t[2]), tonumber(t[3])
@@ -60,6 +61,8 @@ end
 -- world-portals' wrapper fills it at matching dimensions) keeps both halves
 -- in agreement on the very first call. Restored after the render so the
 -- next regular frame is undisturbed.
+---@param outW number
+---@param outH number
 local function primeWorldPortalRTs(outW, outH)
     if not (_G.wp and istable(_G.wp)) then return nil end
     local portals = ents.FindByClass("linked_portal_door")
@@ -82,6 +85,7 @@ local function primeWorldPortalRTs(outW, outH)
     return saved
 end
 
+---@param saved table?
 local function restoreWorldPortalRTs(saved)
     if not saved then return end
     for i = 1, #saved do
@@ -98,6 +102,7 @@ end
 -- Clear screenshots left by previous runs so the folder never grows unbounded.
 -- Fires once on client startup; re-registering on autorefresh is harmless since
 -- Initialize only runs at genuine startup, never on reload.
+---@param dir string?
 local function wipeScreenshotDir(dir)
     dir = dir or SCREENSHOT_DIR
     local files, dirs = file.Find(dir .. "/*", "DATA")
@@ -198,6 +203,7 @@ MCP:AddFunction({
         local fired = false
         local deadline = RealTime() + 2
 
+        ---@param response table
         local function finish(response)
             if fired then return end
             fired = true

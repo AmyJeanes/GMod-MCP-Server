@@ -31,6 +31,8 @@ MCP._DEFERRED = MCP._DEFERRED or {}
 -- FCVAR_ARCHIVE so the user's capability grants persist across game restarts.
 local CAP_FLAGS = { FCVAR_PROTECTED, FCVAR_DONTRECORD, FCVAR_REPLICATED, FCVAR_ARCHIVE }
 
+---@param kind string
+---@param id string
 local function validateId(kind, id)
     if type(id) ~= "string" or id == "" then
         error(kind .. " id must be a non-empty string", 3)
@@ -56,6 +58,7 @@ local function scheduleManifestWrite()
     end)
 end
 
+---@param id string
 function MCP:CapabilityConVarName(id)
     return "mcp_allow_" .. id
 end
@@ -91,6 +94,7 @@ end
 -- `properties` to be an object — strict MCP clients reject `"properties": []`.
 -- An absent `properties` key is equivalent to `{}` in JSON Schema, so dropping
 -- it is the correct canonical form.
+---@param s table
 local function normalizeSchema(s)
     if type(s) ~= "table" then return { type = "object" } end
     local out = {}
@@ -105,6 +109,8 @@ end
 -- capability requirement is advertised in the description automatically (the
 -- structured fields aren't sent over the wire). Keeps the gate and its advertised
 -- note from drifting -- tools never hand-write capability prose.
+---@param caps string[]
+---@param perArg boolean
 local function capNote(caps, perArg)
     local parts = {}
     for _, c in ipairs(caps) do parts[#parts + 1] = "`" .. c .. "`" end
@@ -116,6 +122,8 @@ local function capNote(caps, perArg)
     return note .. "."
 end
 
+---@param desc string?
+---@param note string
 local function appendSentence(desc, note)
     desc = desc or ""
     if desc == "" then return note end
@@ -125,6 +133,8 @@ end
 -- Returns `schema` with the auto cap-note appended to each gated arg's description.
 -- Copies the touched tables so the caller's schema literal isn't mutated, so a
 -- reload re-deriving from the raw description can't double-append.
+---@param schema table
+---@param argRequires table<string, string[]>?
 local function annotateArgCaps(schema, argRequires)
     if not argRequires or type(schema) ~= "table" or type(schema.properties) ~= "table" then
         return schema
@@ -222,6 +232,7 @@ end
 
 -- Resolve one capability id to its grant state: "ok", "missing" (not registered),
 -- or "disabled" (registered but its convar is 0) + the convar name for the message.
+---@param capId string
 local function capGrant(self, capId)
     local cap = self._capabilities[capId]
     if not cap then return "missing" end
@@ -232,6 +243,8 @@ end
 -- Gate a call: the whole-tool `requires`, then any per-arg `arg_requires` whose arg
 -- is actually present (an absent gated arg doesn't trip the gate, so the rest of an
 -- otherwise-ungated tool stays usable without the grant). `args` may be nil.
+---@param fn mcp_function_def
+---@param args table?
 function MCP:CheckCapabilities(fn, args)
     for _, capId in ipairs(fn.requires) do
         local state, convar = capGrant(self, capId)
@@ -267,6 +280,9 @@ end
 -- calls, etc.) are captured and surfaced back to the MCP caller. Without this,
 -- engine-side warnings like "RunConsoleCommand: Command is blocked!" go to the
 -- GMod console but never reach the MCP client.
+---@param fn fun(args: table, ctx: mcp_ctx): table?
+---@param args table
+---@param ctx mcp_ctx
 local function captureRun(fn, args, ctx)
     local output, warnings = {}, {}
     local origPrint, origMsg, origMsgN, origMsgC = print, Msg, MsgN, MsgC
@@ -289,6 +305,7 @@ local function captureRun(fn, args, ctx)
         output[#output + 1] = table.concat(parts, "") .. "\n"
         return origMsgN(...)
     end
+    ---@param color Color
     _G.MsgC = function(color, ...)
         local parts = {...}
         for i, v in ipairs(parts) do parts[i] = tostring(v) end
@@ -316,6 +333,7 @@ end
 
 -- Format a Lua table for the level-2 debug log. Returns a compact JSON string,
 -- or a placeholder if the encode fails (cyclic tables, userdata, etc.).
+---@param t table?
 local function safeEncode(t)
     if t == nil then return "nil" end
     local ok, enc = pcall(util.TableToJSON, MCP.util.Serialize(t), false)
@@ -323,6 +341,10 @@ local function safeEncode(t)
     return "<unencodable>"
 end
 
+---@param funcId string
+---@param args table?
+---@param response table
+---@param elapsedMs number
 local function logDispatch(funcId, args, response, elapsedMs)
     local level = GetConVar("mcp_debug"):GetInt()
     if level <= 0 then return end
@@ -341,6 +363,7 @@ end
 -- The .NET host prefixes every request id with `<session>__` — one session GUID
 -- per connected host. Exposed on ctx so tools can namespace per-caller state
 -- (e.g. saved files) and concurrent hosts don't collide.
+---@param reqId string
 function MCP:SessionFromRequestId(reqId)
     local s = string.match(tostring(reqId), "^(.-)__")
     if not s or s == "" then s = tostring(reqId) end
@@ -351,6 +374,10 @@ end
 -- (deferred). When nil, the handler is expected to call `ctx.respond(result)`
 -- exactly once; the bridge passes a `respondLater` callback that writes that
 -- response when it eventually arrives.
+---@param funcId string
+---@param args table?
+---@param respondLater fun(response: table)?
+---@param reqId string?
 function MCP:Dispatch(funcId, args, respondLater, reqId)
     local startSec = SysTime()
     local response

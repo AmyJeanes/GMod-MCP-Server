@@ -26,6 +26,7 @@ local HARD_MAX_SECONDS = 60 -- backstop so a misconfigured loop can't sample for
 --   duration -> hit the seconds cap
 --   error    -> on_each/stop threw (caught); `error` holds the message
 ---@param opts table
+---@param onDone fun(result: table)?
 function MCP:RunFor(opts, onDone)
     opts = opts or {}
     local seconds = tonumber(opts.seconds)
@@ -46,6 +47,8 @@ function MCP:RunFor(opts, onDone)
     local ticks = 0
     local done = false
 
+    ---@param reason string
+    ---@param err string?
     local function finish(reason, err)
         if done then return end
         done = true
@@ -87,6 +90,7 @@ end
 --   settled is true only when `check` held continuously for `stable_for` (reason "stop");
 --   a timeout (reason "duration") or a `check` error (reason "error") reports settled = false.
 ---@param opts table
+---@param onDone fun(result: table)?
 function MCP:Settle(opts, onDone)
     opts = opts or {}
     if type(opts.check) ~= "function" then

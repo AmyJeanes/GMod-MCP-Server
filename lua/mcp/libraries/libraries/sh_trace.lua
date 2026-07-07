@@ -11,6 +11,8 @@ MCP.trace = MCP.trace or {}
 -- Build the common hit block from a util.TraceLine/TraceHull result. `start_pos` is the
 -- ray origin, so distance is measured from it. Each tool adds its own extras on top
 -- (player_trace: subject/aim_angles; world_trace: end_pos/start_contents/solid flags).
+---@param tr TraceResult
+---@param start_pos Vector
 function MCP.trace.HitBlock(tr, start_pos)
     local r = {
         start_pos = start_pos,

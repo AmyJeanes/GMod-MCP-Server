@@ -11,6 +11,7 @@
 -- etc.) -- the same contract autorefresh relies on.
 
 -- Reject traversal / absolute paths defensively (include is already sandboxed to search paths).
+---@param p string
 local function badPath(p)
     return p:find("%.%.") ~= nil or p:find("^[/\\]") ~= nil
 end
@@ -19,6 +20,8 @@ end
 -- CompileStrings it instead of include()ing -- this bypasses include's compiled-chunk cache,
 -- which on a listen-server host client can serve a stale chunk for an edited file even though
 -- the bytes on disk are current.
+---@param path string
+---@param forceCompile boolean
 local function runFile(path, forceCompile)
     if not forceCompile then
         return pcall(include, path)

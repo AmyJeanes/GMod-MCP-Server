@@ -5,6 +5,8 @@ local DEFAULT_LIMIT = 200
 local MAX_LIMIT = 1000
 local VALID_SORT = { nameasc = true, namedesc = true, dateasc = true, datedesc = true }
 
+---@param list string[]
+---@param limit number
 local function cap(list, limit)
     local n = #list
     if n <= limit then return list, false end

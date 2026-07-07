@@ -43,13 +43,18 @@ local function uniqueId()
     return "MCP_PlayerWalk_" .. tostring(SysTime()) .. "_" .. tostring(math.random(1, 1e9))
 end
 
+---@param v Vector
 local function vec3(v) return { math.Round(v.x, 1), math.Round(v.y, 1), math.Round(v.z, 1) } end
+---@param a Angle
 local function ang3(a) return { math.Round(a.p, 1), math.Round(a.y, 1), math.Round(a.r, 1) } end
 
+---@param a Vector
+---@param b Vector
 local function horizLen(a, b)
     return Vector(a.x - b.x, a.y - b.y, 0):Length()
 end
 
+---@param t table
 local function parseAngles(t)
     if type(t) ~= "table" then return nil end
     local p, y, r = tonumber(t[1]), tonumber(t[2]), tonumber(t[3])
@@ -57,6 +62,7 @@ local function parseAngles(t)
     return Angle(p, y, r)
 end
 
+---@param t table
 local function parseVec3(t)
     if type(t) ~= "table" then return nil end
     local x, y, z = tonumber(t[1]), tonumber(t[2]), tonumber(t[3])
@@ -65,6 +71,8 @@ local function parseVec3(t)
 end
 
 -- Evenly pick up to `n` samples from `list`, always keeping the first and last.
+---@param list table
+---@param n number
 local function downsample(list, n)
     local total = #list
     if total <= n then return list end
@@ -371,6 +379,7 @@ MCP:AddFunction({
 
         -- Attach the sample_expr value to a trajectory row (if requested). On the first
         -- runtime error, stop sampling and remember it -- the walk still finishes.
+        ---@param row table
         local function evalSample(row)
             if sampleFn then
                 local okS, v = pcall(sampleFn)
@@ -393,6 +402,7 @@ MCP:AddFunction({
             hook.Remove("Think", hookId)
         end
 
+        ---@param msg string
         local function abort(msg)
             if fired then return end
             fired = true
@@ -400,6 +410,7 @@ MCP:AddFunction({
             ctx.respond({ ok = false, error = msg })
         end
 
+        ---@param reason string
         local function finish(reason)
             if fired then return end
             fired = true
@@ -449,6 +460,7 @@ MCP:AddFunction({
         end
 
         -- The per-frame view angle: dynamic look-at, evolving spin, or a static hold.
+        ---@param dt number
         local function viewAngleFor(dt)
             if lookAtPoint then
                 return (lookAtPoint - ply:EyePos()):Angle()
@@ -468,6 +480,7 @@ MCP:AddFunction({
         -- Force the input for one command. Shared by both realms; the only difference is
         -- which hook calls it (CreateMove drives LocalPlayer; StartCommand drives the
         -- target after the realm hook has filtered to it).
+        ---@param cmd CUserCmd
         local function drive(cmd)
             local now = RealTime()
             local dt = now - lastViewTime

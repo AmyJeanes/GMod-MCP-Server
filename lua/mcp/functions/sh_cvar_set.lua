@@ -13,6 +13,8 @@ local SETTLE_CAP = 0.5   -- give up waiting for stability after this long; repor
 local STABLE_DWELL = 0.1 -- value must read unchanged this long to count as settled
 
 -- Numeric-aware equality: "600.0" matches "600", but "high" still matches "high".
+---@param a string
+---@param b string
 local function valuesMatch(a, b)
     local na, nb = tonumber(a), tonumber(b)
     if na and nb then return na == nb end

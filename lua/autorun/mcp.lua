@@ -3,6 +3,9 @@
 
 MCP = MCP or {}
 
+---@param folder string
+---@param addonly boolean?
+---@param noprefix boolean?
 function MCP:LoadFolder(folder, addonly, noprefix)
     local base
     if folder then

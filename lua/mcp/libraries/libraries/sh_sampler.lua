@@ -19,6 +19,8 @@ local DEFAULT_HIST_CAP = 100      -- max distinct values returned in the histogr
 
 -- Compile a caller snippet as a function body receiving the shared `state` table, then the
 -- hook's args as `...`. Returns the function, or nil + the compile error string.
+---@param src string
+---@param name string
 function MCP.sampler.Compile(src, name)
     local chunk = CompileString("return function(state, ...)\n" .. src .. "\nend", name, false)
     if type(chunk) == "string" then return nil, chunk end
@@ -27,6 +29,8 @@ end
 
 -- Evenly downsample to `target` points, always keeping the first and last. Returns the
 -- (possibly unchanged) array and whether it was downsampled.
+---@param arr table
+---@param target number
 function MCP.sampler.Downsample(arr, target)
     local n = #arr
     if n <= target then return arr, false end
@@ -39,6 +43,7 @@ end
 
 -- Compact an array to every 2nd element in place (1,3,5,...), halving its length. Used by the
 -- decimate-on-full path to keep a full time window under the raw ceiling at uniform resolution.
+---@param arr table
 local function compactHalf(arr)
     local n = #arr
     local w = 0

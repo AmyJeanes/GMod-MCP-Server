@@ -21,6 +21,8 @@ local CONFIRM_CAP = 0.5  -- wait at most this long for the first render fire bef
 local MAX_TTL = 3600     -- ttl hard cap (seconds)
 
 -- Compile a caller snippet as a function body receiving the hook's args as `...`.
+---@param src string
+---@param name string
 local function compileBody(src, name)
     local chunk = CompileString("return function(...)\n" .. src .. "\nend", name, false)
     if type(chunk) == "string" then return nil, chunk end

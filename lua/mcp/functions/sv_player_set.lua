@@ -52,11 +52,15 @@ local MOVETYPE_NAMES = {
     [MOVETYPE_OBSERVER] = "observer",
 }
 
+---@param v Vector
 local function vec3(v) return { math.Round(v.x, 1), math.Round(v.y, 1), math.Round(v.z, 1) } end
+---@param a Angle
 local function ang3(a) return { math.Round(a.p, 1), math.Round(a.y, 1), math.Round(a.r, 1) } end
 -- Player/weapon colours are normalised 0-1 Vectors, not 0-255.
+---@param v Vector
 local function col3(v) return { math.Round(v.x, 3), math.Round(v.y, 3), math.Round(v.z, 3) } end
 
+---@param t table
 local function parseAngles(t)
     if type(t) ~= "table" then return nil end
     local p, y, r = tonumber(t[1]), tonumber(t[2]), tonumber(t[3])
@@ -64,6 +68,7 @@ local function parseAngles(t)
     return Angle(p, y, r)
 end
 
+---@param t table
 local function parseVec3(t)
     if type(t) ~= "table" then return nil end
     local x, y, z = tonumber(t[1]), tonumber(t[2]), tonumber(t[3])
@@ -72,6 +77,7 @@ local function parseVec3(t)
 end
 
 -- Parse a normalised colour Vector, clamping each channel to 0-1.
+---@param t table
 local function parseColor01(t)
     local v = parseVec3(t)
     if not v then return nil end
@@ -79,6 +85,8 @@ local function parseColor01(t)
 end
 
 -- A zero-extent hull trace at the rest position: is the player embedded in world/solid?
+---@param ply Player
+---@param pos Vector
 local function inSolid(ply, pos)
     local tr = util.TraceHull({
         start = pos,

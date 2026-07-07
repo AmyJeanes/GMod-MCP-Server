@@ -9,6 +9,7 @@
 local TRACE_DISTANCE = 16384 -- default ray length: Source's canonical MAX_TRACE_LENGTH
 local MAX_DISTANCE = 100000
 
+---@param t table
 local function parseVec3(t)
     if type(t) ~= "table" then return nil end
     local x, y, z = tonumber(t[1] or t.x), tonumber(t[2] or t.y), tonumber(t[3] or t.z)
@@ -18,6 +19,8 @@ end
 
 -- Trace from `ply` along its eye angles. opts: distance, origin (start override, default
 -- EyePos), mins/maxs (swept-hull instead of a line).
+---@param ply Player
+---@param opts { distance: number, origin: Vector?, mins: Vector?, maxs: Vector? }
 local function traceFrom(ply, opts)
     local ang = ply:EyeAngles()
     local start = opts.origin or ply:EyePos()

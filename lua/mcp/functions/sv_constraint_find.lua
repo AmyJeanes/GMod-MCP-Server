@@ -5,6 +5,7 @@
 
 local MAX_ROWS = 200
 
+---@param e Entity
 local function entRef(e)
     if not IsValid(e) then return nil end
     return { index = e:EntIndex(), class = e:GetClass() }

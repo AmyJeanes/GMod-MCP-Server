@@ -32,14 +32,16 @@ MCP._irecByLink = MCP._irecByLink or {} -- link_id -> record, so a linked read r
 
 -- Fire the non-code "go at CurTime X" signal to the paired server recorder (linked sessions only),
 -- timed a countdown into the future so the server starts recording exactly as this countdown ends.
+---@param r table
 local function sendGo(r)
     if r.linkId and MCP.irec and MCP.irec.SendGo then
-        MCP.irec.SendGo(r.linkId, CurTime() + r.countdown)
+        MCP.irec.SendGo(r.linkId, CurTime() + (r.countdown or 0))
     end
 end
 
 -- REC timer readout: whole seconds while >10s remain, one decimal in the final 10s (a smoother,
 -- more precise close-out that visibly reaches 0.0).
+---@param remaining number
 local function fmtRemaining(remaining)
     remaining = math.max(remaining, 0)
     if remaining >= 10 then return math.ceil(remaining) .. "s" end
@@ -57,11 +59,13 @@ local function ensureFonts()
     fontsReady = true
 end
 
+---@param r table
 local function forget(r)
     MCP._irec[r.handle] = nil
     if r.linkId then MCP._irecByLink[r.linkId] = nil end
 end
 
+---@param r table
 local function removeHooks(r)
     if r.hookPoint then hook.Remove(r.hookPoint, r.sampleId) end -- no sample hook in UI-only mode
     hook.Remove("Think", r.thinkId)
@@ -71,6 +75,7 @@ end
 -- Cancel (Start popup cancelled, or superseded by a new arm): stop the live hooks and mark the
 -- record cancelled. Left in the registry so a pending read resolves as "cancelled" rather than
 -- "unknown"; reaped later by TTL.
+---@param r table
 local function cancelRecord(r)
     if r.phase == "finished" or r.phase == "cancelled" then return end
     r.phase = "cancelled"
@@ -82,6 +87,7 @@ end
 
 -- User clicked Done: snapshot this attempt, stop the live hooks, keep the record for the read to
 -- collect. UI-only (server-only) sessions have no local series -- just the ct window + status.
+---@param r table
 local function finishRecord(r)
     if r.sampler then
         r.result = r.sampler:Result()
@@ -103,12 +109,14 @@ end
 
 -- User clicked Retry: discard this attempt and re-run the countdown -> record cycle (re-firing the
 -- go-signal for a linked server side). Fresh buffers/state happen at the countdown -> record boundary.
+---@param r table
 local function retryRecord(r)
     r.armedAt = SysTime()
     r.phase = "countdown"
     sendGo(r)
 end
 
+---@param r table
 local function openReview(r)
     local head
     if r.sampler then
@@ -431,17 +439,19 @@ MCP:AddFunction({
 })
 
 -- Collect a finished record: build the response from the snapshot and drop the record.
+---@param r table
 local function collect(r)
     forget(r)
+    local result = assert(r.result, "collect called before a result was recorded")
     local res = {
-        ok = r.result.reason ~= "error",
+        ok = result.reason ~= "error",
         status = "ok",
         realm = MCP.util.RealmName(),
         handle = r.handle,
         link_id = r.linkId,
         hook = r.hookPoint,
     }
-    for k, v in pairs(r.result) do res[k] = v end
+    for k, v in pairs(result) do res[k] = v end
     return res
 end
 

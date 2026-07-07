@@ -8,6 +8,7 @@
 -- Ungated (structured read).
 
 -- Accept a 3-vector as either [x,y,z] (JSON array) or {x=,y=,z=}.
+---@param t table
 local function vec3(t)
     if type(t) ~= "table" then return nil end
     local x = tonumber(t[1] or t.x)
@@ -18,6 +19,7 @@ local function vec3(t)
 end
 
 -- Class matcher honouring the same `*` wildcard ents.FindByClass accepts.
+---@param pat string?
 local function classMatcher(pat)
     if not pat then return nil end
     if not string.find(pat, "*", 1, true) then

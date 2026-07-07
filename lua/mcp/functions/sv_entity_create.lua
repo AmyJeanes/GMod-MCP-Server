@@ -19,6 +19,7 @@ local PHYSICS_PROP_CLASSES = {
     prop_physics_multiplayer = true,
 }
 
+---@param t table
 local function parseVec3(t)
     if type(t) ~= "table" then return nil end
     local x, y, z = tonumber(t[1] or t.x), tonumber(t[2] or t.y), tonumber(t[3] or t.z)
@@ -26,6 +27,7 @@ local function parseVec3(t)
     return Vector(x, y, z)
 end
 
+---@param t table
 local function parseAngles(t)
     if type(t) ~= "table" then return nil end
     local p, y, r = tonumber(t[1] or t.p), tonumber(t[2] or t.y), tonumber(t[3] or t.r)

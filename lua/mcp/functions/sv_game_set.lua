@@ -21,6 +21,8 @@ local MAX_RESTORE = 60    -- RunFor hard-clamps to 60s; keep restore_after withi
 
 -- Knob values are numeric; compare with a small epsilon so a string round-trip can't
 -- false-report took=false (e.g. "0.2" -> 0.2).
+---@param a number
+---@param b number
 local function approx(a, b) return math.abs(a - b) < 1e-3 end
 
 MCP:AddFunction({
@@ -56,6 +58,7 @@ MCP:AddFunction({
         args = args or {}
         MCP._gameRestores = MCP._gameRestores or {} -- convar -> token of the owning pending revert
 
+        ---@type table<string, { def: { convar: string, min: number, max: number, cheat: boolean? }, cv: ConVar, value: number, raw: number, before: number? }>
         local requested = {}
         local count = 0
         for name, def in pairs(MCP.game.KNOBS) do
@@ -64,7 +67,9 @@ MCP:AddFunction({
                 if not raw then return { ok = false, error = "`" .. name .. "` must be a number" } end
                 local cv = GetConVar(def.convar)
                 if not cv then return { ok = false, error = "convar '" .. def.convar .. "' not found" } end
-                requested[name] = { def = def, cv = cv, value = math.Clamp(raw, def.min, def.max), raw = raw }
+                -- glua_ls loop-var bug: a pairs() value reads nilable when placed in a nested table literal
+                local knobDef = def --[[@as { convar: string, min: number, max: number, cheat: boolean? }]]
+                requested[name] = { def = knobDef, cv = cv, value = math.Clamp(raw, knobDef.min, knobDef.max), raw = raw }
                 count = count + 1
             end
         end

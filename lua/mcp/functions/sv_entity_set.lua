@@ -20,6 +20,7 @@ local SETTLE_CAP = 1.0  -- give up waiting for stillness after this long; report
 local STILL_DWELL = 0.1 -- velocity must stay at-rest this long to count as settled
 local STILL_SPEED = 5   -- speed (u/s) below which the entity counts as at rest
 
+---@param t table
 local function parseVec3(t)
     if type(t) ~= "table" then return nil end
     local x, y, z = tonumber(t[1] or t.x), tonumber(t[2] or t.y), tonumber(t[3] or t.z)
@@ -27,6 +28,7 @@ local function parseVec3(t)
     return Vector(x, y, z)
 end
 
+---@param t table
 local function parseAngles(t)
     if type(t) ~= "table" then return nil end
     local p, y, r = tonumber(t[1] or t.p), tonumber(t[2] or t.y), tonumber(t[3] or t.r)
@@ -36,6 +38,8 @@ end
 
 -- A zero-extent hull trace at the rest position: is the entity embedded in world/solid?
 -- Axis-aligned on the OBB (ignores rotation), so it's a best-effort flag like player_set's.
+---@param ent Entity
+---@param pos Vector
 local function inSolid(ent, pos)
     local tr = util.TraceHull({
         start = pos,
@@ -209,6 +213,8 @@ MCP:AddFunction({
 
         -- Physics mutations need a valid PhysObj; record requested-but-inapplicable ones.
         local phys = ent:GetPhysicsObject()
+        ---@param name string
+        ---@param fn fun()
         local function physMutate(name, fn)
             if IsValid(phys) then fn() applied[#applied + 1] = name else skipped[name] = "no physics object" end
         end
@@ -222,6 +228,7 @@ MCP:AddFunction({
             if MCP.entity.SetFrozen(ent, frozen) then applied[#applied + 1] = "frozen" else skipped.frozen = "no physics object" end
         end
 
+        ---@param extra table?
         local function snapshot(extra)
             local p = ent:GetPhysicsObject()
             local r = {

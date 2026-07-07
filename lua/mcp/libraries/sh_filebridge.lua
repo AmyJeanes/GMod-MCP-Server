@@ -17,6 +17,8 @@ MCP._lastPoll = MCP._lastPoll or 0
 local function inboxDir() return "mcp/" .. MCP.util.RealmName() .. "/in" end
 local function outboxDir() return "mcp/" .. MCP.util.RealmName() .. "/out" end
 
+---@param reqId string
+---@param response table
 local function writeResponse(reqId, response)
     if not MCP.util.IsSafeId(reqId) then return end
     -- Serialize on the way out so any handler return (or a raw `lua_run` value)
@@ -31,6 +33,8 @@ end
 -- session cursor (the request id is `<session>__<uuid>`) keeps each connected
 -- MCP host's stream non-duplicative. Realm-local: this is the responding
 -- realm's own ring.
+---@param reqId string
+---@param response table
 local function attachEvents(reqId, response)
     if type(response) ~= "table" then return end
     if not MCP.DrainEventsSince then return end
@@ -56,6 +60,7 @@ local function attachEvents(reqId, response)
     end
 end
 
+---@param filename string
 local function processOne(filename)
     local inboxPath = inboxDir() .. "/" .. filename
     local raw = file.Read(inboxPath, "DATA")

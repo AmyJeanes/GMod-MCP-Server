@@ -8,6 +8,7 @@
 local DEFAULT_DISTANCE = 16384 -- Source's canonical MAX_TRACE_LENGTH
 local MAX_DISTANCE = 100000
 
+---@param t table
 local function parseVec3(t)
     if type(t) ~= "table" then return nil end
     local x, y, z = tonumber(t[1] or t.x), tonumber(t[2] or t.y), tonumber(t[3] or t.z)
@@ -16,6 +17,7 @@ local function parseVec3(t)
 end
 
 -- Resolve a MASK_* constant name to its value; default MASK_SOLID (util.TraceLine's own).
+---@param name string?
 local function resolveMask(name)
     if name == nil then return MASK_SOLID end
     return MCP.util.ResolveEnum("MASK_", name)
@@ -23,6 +25,8 @@ end
 
 -- filter is a list of entindices to ignore (or a single index). Dead/invalid indices are
 -- dropped so a stale entindex doesn't error the trace.
+-- f is an entindex list, a single entindex, or nil (arbitrary JSON-decoded value).
+---@param f any
 ---@return Entity[]?
 local function resolveFilter(f)
     if f == nil then return nil end

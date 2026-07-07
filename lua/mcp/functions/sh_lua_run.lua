@@ -12,10 +12,14 @@ local MAX_WAIT = 30 -- safety cap on the wait; keep <= the declared per-tool tim
 
 -- GMod is Lua 5.1 (no table.pack), so capture the return count via select —
 -- this stays correct even when the call ends in trailing nils.
+---@param ok boolean
 local function packResults(ok, ...)
     return ok, select("#", ...), { ... }
 end
 
+-- rets holds arbitrary lua_run return values.
+---@param count number
+---@param rets table
 local function buildResult(count, rets)
     if count == 1 then return rets[1] end
     if count > 1 then

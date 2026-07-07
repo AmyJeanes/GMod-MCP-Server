@@ -12,6 +12,7 @@
 
 MCP.game = MCP.game or {}
 
+---@type table<string, { convar: string, min: number, max: number, cheat: boolean? }>
 MCP.game.KNOBS = {
     gravity        = { convar = "sv_gravity",     min = 0,    max = 10000 },
     timescale      = { convar = "host_timescale", min = 0.01, max = 10,   cheat = true },

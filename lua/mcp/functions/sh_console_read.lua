@@ -25,8 +25,9 @@ MCP:AddFunction({
 
         local limit = args.limit
         if isnumber(limit) and limit > 0 and #events > limit then
+            local n = limit --[[@as number]] -- isnumber() already confirmed non-nil; custom predicate, analyzer can't narrow it
             local trimmed = {}
-            for i = #events - limit + 1, #events do
+            for i = #events - n + 1, #events do
                 trimmed[#trimmed + 1] = events[i]
             end
             events = trimmed

@@ -47,6 +47,7 @@ local function readIntent()
     return decoded
 end
 
+---@param reason string
 local function transition(reason)
     if fired then return end
     fired = true

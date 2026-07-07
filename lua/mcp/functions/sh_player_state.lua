@@ -9,6 +9,7 @@
 -- MCP.util.Getter (pcall getter factory) and MCP.util.DecodeEnum (lazy enum decode) are the
 -- shared read-tool primitives; both are define-only/lazy so registration stays generator-safe.
 
+---@param ply Player
 local function snapshot(ply)
     local get = MCP.util.Getter(ply)
     local eyeAng = ply:EyeAngles()

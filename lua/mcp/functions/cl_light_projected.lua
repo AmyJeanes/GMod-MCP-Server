@@ -9,15 +9,18 @@ local DEFAULT_TEXTURE = "effects/flashlight001"
 -- Persist across mcp_reload so handles survive an in-memory reload (like MCP._debugDraws).
 MCP._lights = MCP._lights or {}
 
+---@param n number
 local function clamp255(n) return math.Clamp(math.floor(tonumber(n) or 0), 0, 255) end
 
 -- [r,g,b] or [r,g,b,a] (0-255, clamped) -> Color. Returns nil + error string on bad shape.
+---@param c table
 local function parseColor(c)
     if type(c) ~= "table" then return nil, "`color` must be an [r,g,b] (or [r,g,b,a]) array" end
     if c[1] == nil or c[2] == nil or c[3] == nil then return nil, "`color` needs at least r,g,b" end
     return Color(clamp255(c[1]), clamp255(c[2]), clamp255(c[3]), c[4] ~= nil and clamp255(c[4]) or 255)
 end
 
+---@param t table
 local function toVec(t) return Vector(tonumber(t[1]) or 0, tonumber(t[2]) or 0, tonumber(t[3]) or 0) end
 
 MCP:AddFunction({

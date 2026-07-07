@@ -9,6 +9,8 @@
 -- Resolve one structured arg to a Lua value. A plain scalar (number/string/bool) passes straight
 -- through; an object selects a constructor: {entindex=N} -> Entity, {vector=[x,y,z]} -> Vector,
 -- {angle=[p,y,r]} -> Angle. Anything else passes as-is.
+-- Coerces an arbitrary JSON-decoded hook arg (scalar or {entindex/vector/angle=...}).
+---@param a any
 local function resolveArg(a)
     if type(a) ~= "table" then return a end
     if a.entindex ~= nil then return Entity(tonumber(a.entindex) or -1) end
@@ -21,11 +23,13 @@ local function resolveArg(a)
     return a
 end
 
+---@param list table?
 local function resolveArgs(list)
     local out, n = {}, 0
     if istable(list) then
-        n = #list
-        for i = 1, n do out[i] = resolveArg(list[i]) end
+        local arr = list --[[@as table]] -- istable() already confirmed non-nil; custom predicate, analyzer can't narrow it
+        n = #arr
+        for i = 1, n do out[i] = resolveArg(arr[i]) end
     end
     return out, n
 end

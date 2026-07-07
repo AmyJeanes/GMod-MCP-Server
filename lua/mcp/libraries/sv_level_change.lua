@@ -27,6 +27,7 @@ end)
 
 -- Invoked from the bridge (_changelevel). Returns its response synchronously; the
 -- actual map command runs at end of frame, after the response file is written.
+---@param args table?
 function MCP:RequestLevelChange(args)
     args = args or {}
 

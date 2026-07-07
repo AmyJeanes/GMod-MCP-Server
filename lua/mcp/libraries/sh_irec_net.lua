@@ -30,6 +30,8 @@ if SERVER then
 else
     -- Server-bound go-signal from the host client. goTime is a CurTime() a countdown into the
     -- future, so the server has the whole countdown to receive this and be ready to start on time.
+    ---@param linkId string
+    ---@param goTime number
     function MCP.irec.SendGo(linkId, goTime)
         net.Start("MCP_IRecGo")
         net.WriteString(linkId)

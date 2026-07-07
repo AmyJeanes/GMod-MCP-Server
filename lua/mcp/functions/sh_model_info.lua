@@ -16,6 +16,8 @@ local ATT_NAME_CAP = 40
 -- Project an array of strings (Materials) or {Name=...} tables (Sequences/Attachments) to a
 -- capped list of names; returns the list and whether it was truncated. Drops the heavy fields
 -- (an Attachment's Offset matrix string, a Sequence's Events) -- names are what's useful.
+---@param arr table
+---@param cap number
 local function names(arr, cap)
     local out, truncated = {}, false
     if istable(arr) then
@@ -37,6 +39,7 @@ end
 -- hull. Server: an un-Spawned prop_dynamic -- GetModelRenderBounds works after SetModel, before
 -- Spawn, so there's no networking/flicker. Client: a ClientsideModel. Precache first (server
 -- GetModelRenderBounds returns nil/degenerate for an unprecached model).
+---@param model string
 local function measureRenderBounds(model)
     util.PrecacheModel(model)
     local e

@@ -19,6 +19,7 @@ local GO_WAIT_CAP = 20        -- give up waiting for CurTime to reach go_time af
 MCP.irec = MCP.irec or {}     -- also set in sh_irec_net.lua; guard so the headless generator is safe
 MCP._irecSv = MCP._irecSv or {} -- link_id -> server recorder record
 
+---@param rec table
 local function removeHooks(rec)
     hook.Remove(rec.hookPoint, rec.hookId)
     if rec.driveId then hook.Remove("Think", rec.driveId) end
@@ -26,6 +27,7 @@ end
 
 -- Reap done/armed recorders left unread past their TTL, and drop any existing recorder for a link
 -- that's being re-armed.
+---@param rearmLink string
 local function sweep(rearmLink)
     for link, rec in pairs(MCP._irecSv) do
         local stale = rec.doneAt and (RealTime() - rec.doneAt) > RECORD_TTL
@@ -40,6 +42,8 @@ end
 -- Drive one recording attempt for `rec`: wait until CurTime reaches go_time, record for `seconds`,
 -- then snapshot the result. Called on every go-signal, so a client Retry (a fresh go) supersedes
 -- the previous attempt -- the stale drive loop sees rec.driveId change and removes itself.
+---@param rec table
+---@param goTime number
 function MCP.irec.ServerScheduleGo(rec, goTime)
     rec.goTime = goTime
     rec.phase = "waiting"
@@ -52,32 +56,34 @@ function MCP.irec.ServerScheduleGo(rec, goTime)
     if rec.driveId then hook.Remove("Think", rec.driveId) end
     rec.driveId = driveId
 
-    local recStart
+    -- sampler is always set when a recorder is armed (see debug_record_interactive's handler).
+    local sampler = assert(rec.sampler, "ServerScheduleGo requires an armed recorder with a sampler")
+    local recStart = 0
     hook.Add("Think", driveId, function()
         if rec.driveId ~= driveId then hook.Remove("Think", driveId) return end
         local ct = CurTime()
         if rec.phase == "waiting" then
             if ct >= rec.goTime then
-                rec.sampler:Reset() -- start the clock at the recording boundary, not the arm
-                rec.sampler.state = {}
-                if rec.initFn then pcall(rec.initFn, rec.sampler.state) end
+                sampler:Reset() -- start the clock at the recording boundary, not the arm
+                sampler.state = {}
+                if rec.initFn then pcall(rec.initFn, sampler.state) end
                 rec.recording = true
                 rec.phase = "recording"
                 rec.ctStart = math.Round(ct, 3)
                 recStart = RealTime()
             elseif RealTime() - rec.waitStart > GO_WAIT_CAP then
                 rec.phase = "done" -- go_time never arrived (bogus/late); resolve empty
-                rec.result = rec.sampler:Result()
+                rec.result = sampler:Result()
                 rec.result.note = "go_time was not reached within " .. GO_WAIT_CAP .. "s"
                 rec.doneAt = RealTime()
                 hook.Remove("Think", driveId)
             end
         elseif rec.phase == "recording" then
-            if rec.sampler.doneReason or (RealTime() - recStart >= rec.seconds) then
+            if sampler.doneReason or (RealTime() - recStart >= rec.seconds) then
                 rec.recording = false
                 rec.phase = "done"
                 rec.ctEnd = math.Round(CurTime(), 3)
-                rec.result = rec.sampler:Result()
+                rec.result = sampler:Result()
                 rec.result.ct_start = rec.ctStart
                 rec.result.ct_end = rec.ctEnd
                 rec.doneAt = RealTime()
@@ -221,17 +227,19 @@ MCP:AddFunction({
 })
 
 -- Build the response from a done record's snapshot and clean it up.
+---@param rec table
 local function collect(rec)
     removeHooks(rec)
     MCP._irecSv[rec.linkId] = nil
+    local result = assert(rec.result, "collect called before a result was recorded")
     local res = {
-        ok = rec.result.reason ~= "error",
+        ok = result.reason ~= "error",
         status = "ok",
         realm = MCP.util.RealmName(),
         link_id = rec.linkId,
         hook = rec.hookPoint,
     }
-    for k, v in pairs(rec.result) do res[k] = v end
+    for k, v in pairs(result) do res[k] = v end
     return res
 end
 

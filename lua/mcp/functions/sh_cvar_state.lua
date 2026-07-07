@@ -26,6 +26,7 @@ MCP:AddFunction({
     handler = function(args)
         args = args or {}
 
+        ---@param name string
         local function readOne(name)
             local cv = GetConVar(name)
             if not cv then return { name = name, exists = false } end

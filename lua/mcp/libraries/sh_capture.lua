@@ -19,6 +19,8 @@ MCP._eventSeq = MCP._eventSeq or 0     -- process-monotonic; survives mcp_reload
 -- Append an event to the ring. Source gating (mcp_enable/level) is handled by
 -- what's installed in ApplyCaptureState; this stays cheap and guards only
 -- against the two ways it could double-count or recurse.
+---@param kind string
+---@param text string
 function MCP:RecordEvent(kind, text)
     -- Output produced synchronously inside a handler is already captured by
     -- captureRun and attached to that response; don't also log it here.
@@ -49,6 +51,7 @@ end
 -- cursor), and whether anything between the cursor and the oldest retained
 -- event was evicted. A sinceSeq beyond the max (e.g. a stale cursor after a
 -- GMod restart reset the counter) is treated as "from the start".
+---@param sinceSeq number
 function MCP:DrainEventsSince(sinceSeq)
     if not isnumber(sinceSeq) then sinceSeq = 0 end
     local maxSeq = MCP._eventSeq or 0
@@ -86,6 +89,7 @@ function MCP:InstallConsoleDetours()
     ---@type table<string, function>
     local engine = { print = print, Msg = Msg, MsgN = MsgN, MsgC = MsgC }
 
+    ---@param sep string
     local function joined(sep, ...)
         local parts = { ... }
         for i, v in ipairs(parts) do parts[i] = tostring(v) end
@@ -110,6 +114,7 @@ function MCP:InstallConsoleDetours()
         end
         return engine.MsgN(...)
     end
+    ---@param color Color
     function _G.MsgC(color, ...)
         if MCP._captureConsole and not MCP._inDispatch then
             MCP:RecordEvent("msg", joined("", ...))
