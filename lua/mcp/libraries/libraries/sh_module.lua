@@ -1,5 +1,24 @@
 -- Registry: AddCapability, AddFunction, dispatch, manifest emission.
 
+---@class mcp_ctx
+---@field deferred table sentinel: return this from a handler, then deliver the real response later via `respond`
+---@field session string?
+---@field respond fun(response: table)
+
+---@class mcp_capability_def
+---@field id string
+---@field description string?
+---@field default boolean?
+
+---@class mcp_function_def
+---@field id string
+---@field description string?
+---@field schema table
+---@field requires string[]?
+---@field arg_requires table<string, string[]>?
+---@field timeout number?
+---@field handler fun(args: table, ctx: mcp_ctx): table?
+
 MCP._functions = MCP._functions or {}
 MCP._capabilities = MCP._capabilities or {}
 
@@ -41,6 +60,7 @@ function MCP:CapabilityConVarName(id)
     return "mcp_allow_" .. id
 end
 
+---@param t mcp_capability_def
 function MCP:AddCapability(t)
     if type(t) ~= "table" then error("MCP:AddCapability expects a table", 2) end
     validateId("capability", t.id)
@@ -126,6 +146,7 @@ local function annotateArgCaps(schema, argRequires)
     return out
 end
 
+---@param t mcp_function_def
 function MCP:AddFunction(t)
     if type(t) ~= "table" then error("MCP:AddFunction expects a table", 2) end
     validateId("function", t.id)
@@ -351,6 +372,7 @@ function MCP:Dispatch(funcId, args, respondLater, reqId)
                 response = { ok = false, error = capErr }
             else
                 local resolved = false
+                ---@type mcp_ctx
                 local ctx = {
                     deferred = MCP._DEFERRED,
                     session = reqId and self:SessionFromRequestId(reqId) or nil,
