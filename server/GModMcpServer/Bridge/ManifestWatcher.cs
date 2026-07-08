@@ -52,6 +52,7 @@ public sealed class ManifestWatcher : IDisposable
         try
         {
             var merged = LoadAndMerge();
+            if (merged is null) return; // transient read failure — keep _current, don't fire
             bool changed;
             lock (_gate)
             {
@@ -71,7 +72,11 @@ public sealed class ManifestWatcher : IDisposable
         }
     }
 
-    private MergedManifest LoadAndMerge()
+    // Returns null to abort the reload when a realm file exists but can't be read as a valid
+    // manifest, so a transient empty/partial read (a rewrite truncates before it writes) isn't
+    // mistaken for "this realm dropped all its tools" and spammed to clients. Genuine emptiness
+    // arrives as a delete (File.Exists false), which merges to zero tools and fires normally.
+    private MergedManifest? LoadAndMerge()
     {
         var merged = new MergedManifest();
         foreach (var realm in new[] { "server", "client" })
@@ -79,32 +84,51 @@ public sealed class ManifestWatcher : IDisposable
             var path = Path.Combine(_mcpRoot, $"manifest_{realm}.json");
             if (!File.Exists(path)) continue;
 
-            try
+            var manifest = ReadRealmManifest(path, realm);
+            if (manifest is null) return null;
+
+            foreach (var fn in manifest.Functions)
             {
-                var raw = File.ReadAllText(path);
-                if (string.IsNullOrWhiteSpace(raw)) continue;
-
-                var manifest = JsonSerializer.Deserialize<RealmManifest>(raw, JsonOpts);
-                if (manifest == null) continue;
-
-                foreach (var fn in manifest.Functions)
-                {
-                    var toolName = fn.Id + (realm == "server" ? "_sv" : "_cl");
-                    merged.Tools[toolName] = new ToolDescriptor(toolName, fn.Id, realm, fn);
-                }
-                foreach (var cap in manifest.Capabilities)
-                {
-                    // Capabilities are realm-independent in concept; both realms may declare the same
-                    // capability id. Last-write wins; current state from whichever realm wrote latest.
-                    merged.Capabilities[cap.Id] = cap;
-                }
+                var toolName = fn.Id + (realm == "server" ? "_sv" : "_cl");
+                merged.Tools[toolName] = new ToolDescriptor(toolName, fn.Id, realm, fn);
             }
-            catch (Exception ex)
+            foreach (var cap in manifest.Capabilities)
             {
-                _log.LogWarning(ex, "Failed to parse manifest for realm {Realm}", realm);
+                // Capabilities are realm-independent in concept; both realms may declare the same
+                // capability id. Last-write wins; current state from whichever realm wrote latest.
+                merged.Capabilities[cap.Id] = cap;
             }
         }
         return merged;
+    }
+
+    // Reads and parses one realm's manifest, retrying briefly to ride out a mid-write window
+    // (empty content, a partial write, or a sharing lock). Returns null if it never settles.
+    private RealmManifest? ReadRealmManifest(string path, string realm)
+    {
+        const int attempts = 6;
+        const int delayMs = 40;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var raw = File.ReadAllText(path);
+                if (!string.IsNullOrWhiteSpace(raw))
+                {
+                    var manifest = JsonSerializer.Deserialize<RealmManifest>(raw, JsonOpts);
+                    if (manifest != null) return manifest;
+                }
+            }
+            catch (IOException) { } // locked / deleted mid-read
+            catch (JsonException) { } // partial content
+
+            if (attempt >= attempts - 1)
+            {
+                _log.LogDebug("Manifest for realm {Realm} unreadable after {Attempts} attempts; skipping reload", realm, attempts);
+                return null;
+            }
+            Thread.Sleep(delayMs);
+        }
     }
 
     public void Dispose()
