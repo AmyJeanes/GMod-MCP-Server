@@ -25,7 +25,8 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           path: GMod-MCP-Server
-          token: ${{ secrets.TOKEN }}
+          # main's ruleset only lets a bypass identity push; the default GITHUB_TOKEN is rejected.
+          token: ${{ secrets.GENERATE_DOCS_TOKEN }}
 
       - name: Checkout gmod-addon-tools
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
