@@ -37,6 +37,7 @@ function MCP.player.Resolve(args, opts)
     permitted[#permitted + 1] = "name"
     permitted[#permitted + 1] = "userid"
     permitted[#permitted + 1] = "entindex"
+    permitted[#permitted + 1] = "steamid"
     if allowAll then permitted[#permitted + 1] = "all" end
     local permittedStr = table.concat(permitted, ", ")
 
@@ -49,6 +50,7 @@ function MCP.player.Resolve(args, opts)
     if args.name ~= nil then sel[#sel + 1] = "name" end
     if args.userid ~= nil then sel[#sel + 1] = "userid" end
     if args.entindex ~= nil then sel[#sel + 1] = "entindex" end
+    if args.steamid ~= nil then sel[#sel + 1] = "steamid" end
     if args.all then
         if not allowAll then return nil, "`all` is not a valid subject here; use one of: " .. permittedStr end
         sel[#sel + 1] = "all"
@@ -113,11 +115,19 @@ function MCP.player.Resolve(args, opts)
         return { p }
     end
 
-    local idx = tonumber(args.entindex)
-    if not idx then return nil, "`entindex` must be a number" end
-    local e = Entity(idx)
-    if not IsValid(e) or not e:IsPlayer() then return nil, "entity " .. tostring(idx) .. " is not a valid player" end
-    return { e }
+    if args.entindex ~= nil then
+        local idx = tonumber(args.entindex)
+        if not idx then return nil, "`entindex` must be a number" end
+        local e = Entity(idx)
+        if not IsValid(e) or not e:IsPlayer() then return nil, "entity " .. tostring(idx) .. " is not a valid player" end
+        return { e }
+    end
+
+    local want = tostring(args.steamid)
+    for _, p in ipairs(player.GetAll()) do
+        if p:SteamID() == want or p:SteamID64() == want then return { p } end
+    end
+    return nil, "no player with steamid " .. want
 end
 
 -- Compact identity block echoed by every player_* tool so a caller can confirm the
