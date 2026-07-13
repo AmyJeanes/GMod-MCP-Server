@@ -101,6 +101,7 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `lua_run_sv` | server | `unsafe` | Compile and execute Lua source in this realm. |
 | `model_info_cl` | client | — | Structured info about a model ASSET without spawning a prop -- read straight from the model file via util.GetModelInfo (no entity, no spawn), so it is synchronous and realm-identical. |
 | `model_info_sv` | server | — | Structured info about a model ASSET without spawning a prop -- read straight from the model file via util.GetModelInfo (no entity, no spawn), so it is synchronous and realm-identical. |
+| `player_lua_run_sv` | server | `unsafe` | Compile and execute Lua source on a target player's client realm and return the result. |
 | `player_set_sv` | server | `player_control` | Set a player or bot's pose and state, then wait for it to settle and confirm it stuck. |
 | `player_state_cl` | client | — | Structured snapshot of a player (or all players) -- identity, vitals, eye position/aim, velocity, movement state (movetype, on_ground, crouching, ducking, frozen, godmode, water_level), view offset and collision hull, model/animation sequence, playermodel and weapon colours, and active weapon, in one read. |
 | `player_state_sv` | server | — | Structured snapshot of a player (or all players) -- identity, vitals, eye position/aim, velocity, movement state (movetype, on_ground, crouching, ducking, frozen, godmode, water_level), view offset and collision hull, model/animation sequence, playermodel and weapon colours, and active weapon, in one read. |
