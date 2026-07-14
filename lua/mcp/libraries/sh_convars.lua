@@ -1,5 +1,10 @@
 -- Framework convars. Capability convars (`mcp_allow_<id>`) are auto-created
 -- by MCP:AddCapability in sh_module.lua / sh_capabilities.lua.
+--
+-- CLIENT quirk: despite the CreateConVars below, on the client these aren't Lua-writable. The
+-- non-replicated ones (mcp_capture/debug/poll) come back from config before autorun so CreateConVar
+-- is skipped, leaving them engine- (not Lua-) created (:SetInt throws, change-callbacks don't fire);
+-- the replicated ones (mcp_enable) are server-authoritative. Write via RunConsoleCommand, poll to reconcile.
 
 -- mcp_enable replicates server -> client so a single toggle controls both bridges.
 -- FCVAR_ARCHIVE so user consent persists across game restarts.
