@@ -111,7 +111,7 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `player_walk_sv` | server | `player_control` | Walk a target player or bot naturally by driving its CUserCmd each tick via StartCommand -- the canonical way to control bots. |
 | `reload_file_cl` | client | — | Hot-reload one on-disk Lua source file by re-running it in this realm -- a targeted alternative to mcp_reload (which rebuilds the whole MCP addon) and the engine's autorefresh (which only fires for some edits), for iterating on a single file in any addon. |
 | `reload_file_sv` | server | — | Hot-reload one on-disk Lua source file by re-running it in this realm -- a targeted alternative to mcp_reload (which rebuilds the whole MCP addon) and the engine's autorefresh (which only fires for some edits), for iterating on a single file in any addon. |
-| `screenshot_cl` | client | — | Capture a JPEG screenshot. |
+| `screenshot_cl` | client | — | Capture a JPEG of what the player actually sees on screen - the genuine rendered frame (HUD, portals, post-processing all as-live), not a re-render, so the image matches the game exactly. |
 | `world_trace_cl` | client | — | Raycast from an arbitrary origin and report what the ray hits -- the hit entity (index and class; drill in with entity_state), hit position, distance, surface normal and material, plus the origin's point-contents and the trace's solid flags. |
 | `world_trace_sv` | server | — | Raycast from an arbitrary origin and report what the ray hits -- the hit entity (index and class; drill in with entity_state), hit position, distance, surface normal and material, plus the origin's point-contents and the trace's solid flags. |
 <!-- TOOLS:GAME:END -->
