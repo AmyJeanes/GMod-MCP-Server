@@ -41,12 +41,20 @@
 --     entities it lists have actually un-dormanted - a done-condition robust to a
 --     frozen or high-ping host, not a fixed settle.
 --
+-- Optionally armed: a `trigger` Lua expression is polled each render frame and the
+-- shot is grabbed on the first frame it goes truthy (to catch a transient), capped
+-- by `trigger_seconds` (then a timeout error). It's evaluated in the render hooks,
+-- so it sees the same frame that gets captured.
+--
 -- `render.Capture` needs an active render context, so the handler defers via
 -- `ctx.deferred` and resolves from the capture hook. A `Think`-based deadline is
 -- the fallback when no frame renders (minimised, paused).
 
 local DEFAULT_MAX_SIZE = 1280
 local DEFAULT_FOV = 90
+
+-- Safety cap on an armed `trigger` wait; keep <= the declared per-tool timeout.
+local MAX_TRIGGER = 30
 
 -- Every saved screenshot lives under this one data/ subfolder (then a
 -- per-session subfolder), so the startup wipe below has a single, well-defined
@@ -131,8 +139,8 @@ hook.Add("Initialize", "MCP_ScreenshotDirWipe", function() wipeScreenshotDir() e
 
 MCP:AddFunction({
     id = "screenshot",
-    timeout = 15,
-    description = "Capture a JPEG of what the player actually sees on screen - the genuine rendered frame (HUD, portals, post-processing all as-live), not a re-render, so the image matches the game exactly. Without `origin`/`angles` it captures the local player's real viewport (HUD included). Supplying `origin`+`angles` (and optional `fov`) overrides the camera for a single frame via CalcView to shoot from an arbitrary world position without moving the player (HUD hidden, player body shown); it briefly extends the player's PVS to the camera so out-of-view world-portal surfaces and other entities still render. Output is downscaled so the longest edge is at most `max_size` (default 1280) while preserving the real screen aspect ratio (never upscaled). Every shot is ALWAYS saved under data/mcp/screenshots/<session>/ with an auto-generated name (seq_time_mode, e.g. 0003_153122_player.jpg) and that path is returned as text; the folder is wiped on each game startup. By default only the path is returned (so a human can watch the folder live, or an out-of-band analyzer like Gemini can read it without the bytes entering the agent's context); pass `inline=true` to also receive the raw image.",
+    timeout = MAX_TRIGGER + 3, -- room for an armed `trigger` wait; a plain shot returns at once
+    description = "Capture a JPEG of what the player actually sees on screen - the genuine rendered frame (HUD, portals, post-processing all as-live), not a re-render, so the image matches the game exactly. Without `origin`/`angles` it captures the local player's real viewport (HUD included). Supplying `origin`+`angles` (and optional `fov`) overrides the camera for a single frame via CalcView to shoot from an arbitrary world position without moving the player (HUD hidden, player body shown); it briefly extends the player's PVS to the camera so out-of-view world-portal surfaces and other entities still render. Optionally arm the shot with `trigger`: a Lua expression polled each render frame; the capture is taken on the first frame it returns truthy (capped by `trigger_seconds`, default 30, after which a timeout error is returned instead of a frame) - use it to catch a transient on-screen moment. Output is downscaled so the longest edge is at most `max_size` (default 1280) while preserving the real screen aspect ratio (never upscaled). Every shot is ALWAYS saved under data/mcp/screenshots/<session>/ with an auto-generated name (seq_time_mode, e.g. 0003_153122_player.jpg) and that path is returned as text; the folder is wiped on each game startup. By default only the path is returned (so a human can watch the folder live, or an out-of-band analyzer like Gemini can read it without the bytes entering the agent's context); pass `inline=true` to also receive the raw image.",
     schema = {
         type = "object",
         properties = {
@@ -176,8 +184,19 @@ MCP:AddFunction({
                 type = "boolean",
                 description = "When true, also return the raw JPEG inline so the calling agent can see the image directly (costs context tokens). Default false: only the saved file path is returned - open it live, or hand it to an out-of-band analyzer (e.g. Gemini) without the bytes entering the agent's context.",
             },
+            trigger = {
+                type = "string",
+                description = "A Lua expression polled each render frame; the screenshot is captured on the first frame it returns truthy - use it to catch a transient on-screen moment. E.g. \"IsValid(ents.GetByIndex(7)) and ents.GetByIndex(7):GetVelocity():Length() > 300\". If it never becomes true within `trigger_seconds` a timeout error is returned instead of a frame; a trigger that errors ends the call with that error.",
+            },
+            trigger_seconds = {
+                type = "number",
+                minimum = 0.05,
+                maximum = MAX_TRIGGER,
+                description = "Cap in seconds on the `trigger` wait (default 30, max 30). On expiry a timeout error is returned rather than a frame. Only applies with `trigger`.",
+            },
         },
     },
+    arg_requires = { trigger = { "unsafe" } },
     handler = function(args, ctx)
         args = args or {}
         local quality = math.Clamp(math.floor(tonumber(args.quality) or 80), 1, 100)
@@ -215,6 +234,25 @@ MCP:AddFunction({
         end
 
         local inline = args.inline == true
+
+        -- Armed trigger: compile the predicate up front so a typo fails fast,
+        -- before we defer. Gated behind `unsafe` (arg_requires) since it runs
+        -- caller Lua each frame.
+        local hasTrigger = args.trigger ~= nil
+        local triggerFn
+        if hasTrigger then
+            if type(args.trigger) ~= "string" then
+                return { ok = false, error = "`trigger` must be a Lua expression string" }
+            end
+            local c = CompileString("return (" .. args.trigger .. ")", "mcp_screenshot_trigger", false)
+            if type(c) == "string" then
+                return { ok = false, error = "`trigger` compile error: " .. c }
+            end
+            triggerFn = c
+        elseif args.trigger_seconds ~= nil then
+            return { ok = false, error = "`trigger_seconds` only applies with `trigger`" }
+        end
+        local triggerCap = math.Clamp(tonumber(args.trigger_seconds) or MAX_TRIGGER, 0.05, MAX_TRIGGER)
 
         -- Each shot is saved under a per-session folder so concurrent MCP hosts
         -- never clobber each other; the seq_time_mode filename is built at write
@@ -259,6 +297,16 @@ MCP:AddFunction({
         local pvsDeadline = RealTime() + 10
         local frameDeadline
 
+        -- Armed-trigger wait state. The predicate is polled in the render hooks
+        -- (so it sees the frame that gets grabbed) and latched on first truthy;
+        -- triggerDeadline caps the wait.
+        local triggered = false
+        local triggerChecked = false   -- predicate polled at least once
+        local triggerImmediate = false -- true on its first check: may have fired before we watched
+        local triggerFiredMs           -- arm -> fired, reported to the caller
+        local triggerBeganAt = RealTime()
+        local triggerDeadline          -- armed once PVS is good (the trigger's cap window)
+
         -- True once PVS propagation is confirmed complete (every listed entity is
         -- live) or we gave up (pvsStalled). Records the settle time on first ready.
         local function pvsReady()
@@ -282,15 +330,35 @@ MCP:AddFunction({
             ctx.respond(response)
         end
 
+        -- Armed-trigger gate: hold the shot until the caller's predicate first
+        -- goes truthy, latched so a one-frame-true predicate isn't missed by a
+        -- re-check later in the same frame. A predicate throw ends the call.
+        local function triggerReady()
+            if not hasTrigger or triggered then return true end
+            local ok, val = pcall(triggerFn)
+            if not ok then
+                finish({ ok = false, error = "`trigger` error: " .. tostring(val) })
+                return false
+            end
+            local firstCheck = not triggerChecked
+            triggerChecked = true
+            if val then
+                triggered = true
+                triggerImmediate = firstCheck
+                triggerFiredMs = math.Round((RealTime() - triggerBeganAt) * 1000)
+            end
+            return triggered
+        end
+
         if customView then
             hook.Add("CalcView", hookId, function()
-                if fired or not pvsReady() then return end
+                if fired or not pvsReady() or not triggerReady() then return end
                 calcViewRan = true
                 appliedFrame = FrameNumber()
                 return { origin = origin, angles = angles, fov = fov, drawviewer = true }
             end)
             hook.Add("PreDrawViewModel", hookId, function()
-                if fired or not pvsReady() then return end
+                if fired or not pvsReady() or not triggered then return end
                 return true
             end)
         end
@@ -387,6 +455,18 @@ MCP:AddFunction({
                     eyeAng.p, eyeAng.y, eyeAng.r)
             end
 
+            if triggerFiredMs then
+                if triggerImmediate then
+                    desc = desc .. string.format(
+                        " Trigger was already true on the first watched frame (%d ms in) - the shot may be"
+                        .. " past the moment it first became true, not its leading edge (the condition may"
+                        .. " already have held when watching began, e.g. a steady state rather than a transient).",
+                        triggerFiredMs)
+                else
+                    desc = desc .. string.format(" Trigger fired after %d ms.", triggerFiredMs)
+                end
+            end
+
             -- Always persist the shot so a human can watch the folder live;
             -- embed the bytes inline only when the caller opted in. Seq is bumped
             -- here, post-capture, so a failed render doesn't leave a gap.
@@ -441,6 +521,7 @@ MCP:AddFunction({
             sawMainView = true
             renderPos, renderAng = EyePos(), EyeAngles()
             if not pvsReady() then return end
+            if not triggerReady() then return end
             if hud then return end
             if customView and appliedFrame ~= FrameNumber() then return end
             captureFrom(renderPos, renderAng)
@@ -450,6 +531,7 @@ MCP:AddFunction({
             hook.Add("PostRender", hookId, function()
                 if fired then return end
                 if not pvsReady() then return end
+                if not triggerReady() then return end
                 if customView and appliedFrame ~= FrameNumber() then return end
                 captureFrom(renderPos or EyePos(), renderAng or EyeAngles())
             end)
@@ -463,9 +545,10 @@ MCP:AddFunction({
             if fired then return end
             local now = RealTime()
 
-            -- Phase 1: hold for PVS to propagate (freecam only). If it overruns the
-            -- generous deadline, stop waiting and capture anyway with a warning
-            -- rather than hang - an honest safety net, not the mechanism.
+            -- Phase 1: hold for PVS to propagate (freecam only). The trigger is not
+            -- watched until PVS is good, so it only ever fires on a fully-populated
+            -- frame. If PVS overruns its deadline, stop waiting and proceed with a
+            -- warning rather than hang - an honest safety net, not the mechanism.
             if not pvsReady() then
                 if now < pvsDeadline then return end
                 local pending = MCP.screenshotPVS.Pending(pvsWait)
@@ -473,8 +556,27 @@ MCP:AddFunction({
                 pvsStalled = true
             end
 
-            -- Phase 2: ready (or gave up). Give a frame a moment to be grabbed; if
-            -- none is, report why instead of timing out at the bridge layer.
+            -- Phase 2: PVS is ready (or we gave up). Now watch for the armed
+            -- trigger, giving it its full cap from the moment the gate opened (not
+            -- from the call start), so a slow PVS settle doesn't eat the window. If
+            -- it never fires, error rather than grab an arbitrary frame (unlike the
+            -- PVS stall, which warns and shoots - a never-true trigger has no
+            -- meaningful frame to capture). A paused/minimised game trips this too,
+            -- since the predicate is polled only in the render hooks.
+            if hasTrigger and not triggered then
+                triggerDeadline = triggerDeadline or (now + triggerCap)
+                if now < triggerDeadline then return end
+                finish({
+                    ok = false,
+                    reason = "timeout",
+                    error = string.format("screenshot `trigger` never became true within %g s", triggerCap),
+                })
+                return
+            end
+
+            -- Phase 3: PVS ready and trigger fired (or neither is armed). Give a
+            -- frame a moment to be grabbed; if none is, report why instead of
+            -- timing out at the bridge layer.
             frameDeadline = frameDeadline or (now + 2)
             if now < frameDeadline then return end
 
