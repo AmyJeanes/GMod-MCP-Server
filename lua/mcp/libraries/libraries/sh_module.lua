@@ -4,6 +4,7 @@
 ---@field deferred table sentinel: return this from a handler, then deliver the real response later via `respond`
 ---@field session string?
 ---@field respond fun(response: table)
+---@field onCancel fun(teardown: fun()) register a teardown to run if this call is an async job that gets cancelled (remove hooks / release side effects); a no-op for a blocking call
 
 ---@class mcp_capability_def
 ---@field id string
@@ -17,6 +18,7 @@
 ---@field requires string[]?
 ---@field arg_requires table<string, string[]>?
 ---@field timeout number?
+---@field asyncable boolean? when true, the tool advertises an `async` arg and can run its deferred wait as a background job (sh_jobs.lua)
 ---@field handler fun(args: table, ctx: mcp_ctx): table?
 
 MCP._functions = MCP._functions or {}
@@ -156,6 +158,29 @@ local function annotateArgCaps(schema, argRequires)
     return out
 end
 
+local ASYNC_ARG_DESC = "Run in the background instead of blocking: returns a `job_id` immediately; " ..
+    "fetch the result later with `job_collect` (it also arrives passively on a later tool result's " ..
+    "`events`). Default false = block until the tool finishes."
+
+-- Adds the universal `async` boolean property to an asyncable tool's advertised
+-- schema. Copies the schema + properties (like annotateArgCaps) so the caller's
+-- literal isn't mutated; a non-asyncable tool is returned untouched.
+---@param schema table
+---@param asyncable boolean?
+local function injectAsyncArg(schema, asyncable)
+    if not asyncable then return schema end
+    local out = {}
+    for k, v in pairs(schema) do out[k] = v end
+    out.type = out.type or "object"
+    local props = {}
+    if type(schema.properties) == "table" then
+        for k, v in pairs(schema.properties) do props[k] = v end
+    end
+    props.async = { type = "boolean", description = ASYNC_ARG_DESC }
+    out.properties = props
+    return out
+end
+
 ---@param t mcp_function_def
 function MCP:AddFunction(t)
     if type(t) ~= "table" then error("MCP:AddFunction expects a table", 2) end
@@ -218,9 +243,10 @@ function MCP:AddFunction(t)
     self._functions[t.id] = {
         id = t.id,
         description = description,
-        schema = annotateArgCaps(normalizeSchema(t.schema), argRequires),
+        schema = injectAsyncArg(annotateArgCaps(normalizeSchema(t.schema), argRequires), t.asyncable),
         requires = requires,
         arg_requires = argRequires,
+        asyncable = t.asyncable and true or false,
         handler = t.handler,
         realm = MCP.util.RealmName(),
         timeout = timeout,
@@ -398,6 +424,15 @@ function MCP:Dispatch(funcId, args, respondLater, reqId)
             if not capOk then
                 response = { ok = false, error = capErr }
             else
+                -- Async arm: an asyncable tool called with async=true runs its
+                -- deferred wait as a background job. ctx.respond then routes into
+                -- the job's slot (not the bridge), ctx.onCancel captures a teardown
+                -- for job_cancel, and Dispatch hands back a job_id at once instead
+                -- of holding the call open. See sh_jobs.lua.
+                local asyncArm = fn.asyncable and type(args) == "table" and args.async == true
+                local jobId       -- minted lazily on the deferred path, so a sync return wastes no id
+                local jobCancel
+
                 local resolved = false
                 ---@type mcp_ctx
                 local ctx = {
@@ -413,8 +448,13 @@ function MCP:Dispatch(funcId, args, respondLater, reqId)
                             }
                         end
                         logDispatch(funcId, args, deferredResponse, (SysTime() - startSec) * 1000)
-                        if respondLater then respondLater(deferredResponse) end
+                        if asyncArm then
+                            self:CompleteJob(jobId, deferredResponse)
+                        elseif respondLater then
+                            respondLater(deferredResponse)
+                        end
                     end,
+                    onCancel = function(teardown) jobCancel = teardown end,
                 }
 
                 local pcallOk, ret, output, warnings = captureRun(fn.handler, args or {}, ctx)
@@ -422,13 +462,35 @@ function MCP:Dispatch(funcId, args, respondLater, reqId)
                 if not pcallOk then
                     response = { ok = false, error = "handler error: " .. tostring(ret) }
                 elseif ret == MCP._DEFERRED then
-                    -- Async path: handler will call ctx.respond later. Console
-                    -- output / warnings captured during the synchronous portion
-                    -- are dropped because the response isn't ours to write.
-                    return nil
+                    if asyncArm then
+                        -- Handler is now running in the background. Register the
+                        -- job (its ctx.respond lands in the slot later via
+                        -- CompleteJob) and hand back the id.
+                        jobId = self:NextJobId()
+                        self:RegisterJob(jobId, {
+                            tool = funcId,
+                            session = ctx.session,
+                            cancel = jobCancel,
+                            deadline = RealTime() + (fn.timeout or 60),
+                        })
+                        response = {
+                            ok = true,
+                            job_id = jobId,
+                            status = "armed",
+                            tool = funcId,
+                            note = "Armed in the background. Collect with job_collect (job_id=\"" ..
+                                jobId .. "\"); it also arrives passively on a later tool result.",
+                        }
+                    else
+                        -- Normal deferred: handler will call ctx.respond later.
+                        -- Sync-portion console/warnings are dropped (not ours to write).
+                        return nil
+                    end
                 elseif type(ret) ~= "table" then
                     response = { ok = false, error = "handler must return a table; got " .. type(ret) }
                 else
+                    -- Sync return (validation error or instant result). If async was
+                    -- requested it was moot -- pass the result straight back, no job.
                     response = ret
                 end
 

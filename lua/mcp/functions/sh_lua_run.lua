@@ -59,6 +59,7 @@ MCP:AddFunction({
         required = { "code" },
     },
     requires = { "unsafe" },
+    asyncable = true,
     handler = function(args, ctx)
         local code = args.code
         if type(code) ~= "string" then
@@ -112,7 +113,7 @@ MCP:AddFunction({
             runForOpts.stop = function() return untilFn() and true or false end
         end
 
-        MCP:RunFor(runForOpts, function(r)
+        local cancelWait = MCP:RunFor(runForOpts, function(r)
             if r.reason == "error" then
                 ctx.respond({ ok = false, error = "`wait_until` error: " .. tostring(r.error), seconds_elapsed = math.Round(r.elapsed, 3) })
                 return
@@ -146,6 +147,7 @@ MCP:AddFunction({
                 result = result,
             })
         end)
+        ctx.onCancel(cancelWait)
 
         return ctx.deferred
     end,

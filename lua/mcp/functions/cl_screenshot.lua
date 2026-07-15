@@ -197,6 +197,7 @@ MCP:AddFunction({
         },
     },
     arg_requires = { trigger = { "unsafe" } },
+    asyncable = true,
     handler = function(args, ctx)
         args = args or {}
         local quality = math.Clamp(math.floor(tonumber(args.quality) or 80), 1, 100)
@@ -317,9 +318,9 @@ MCP:AddFunction({
             return true
         end
 
-        ---@param response table
-        local function finish(response)
-            if fired then return end
+        -- Remove every hook and release the PVS extension. Split from finish() so
+        -- job_cancel (via ctx.onCancel) can tear the shot down without responding.
+        local function teardown()
             fired = true
             hook.Remove("PostRender", hookId)
             hook.Remove("Think", hookId)
@@ -327,8 +328,14 @@ MCP:AddFunction({
             hook.Remove("CalcView", hookId)
             hook.Remove("PreDrawViewModel", hookId)
             if sentPVS then MCP.screenshotPVS.Finish(pvsWait) end
+        end
+        ---@param response table
+        local function finish(response)
+            if fired then return end
+            teardown()
             ctx.respond(response)
         end
+        ctx.onCancel(teardown)
 
         -- Armed-trigger gate: hold the shot until the caller's predicate first
         -- goes truthy, latched so a one-frame-true predicate isn't missed by a

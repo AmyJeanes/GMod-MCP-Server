@@ -57,6 +57,20 @@ A handler that must wait for an effect across frames defers (`return ctx.deferre
 
 A tool's `seconds` must sit under its declared `timeout` (per-tool request timeout) or the .NET host abandons the call before the wait finishes. **Gate stillness on velocity, not per-frame position** — a from-rest drop starts at ~0 speed, so a position gate false-settles before the fall accelerates. Consumers: `player_set`, `bot_remove`. (`bot_spawn`'s multi-phase respawn is a deliberately frame-counted state machine, not a settle, so it stays hand-rolled.)
 
+## Async jobs (asyncable / job_collect)
+
+Any tool that defers can opt into running its wait as a **background job** instead of blocking the call: declare `asyncable = true` in the `AddFunction` table and the framework advertises a universal `async` boolean arg. Called with `async = true`, `MCP:Dispatch` mints a job, points `ctx.respond` at a job-registry slot instead of the bridge's `respondLater`, and returns `{ job_id, status = "armed" }` **at once** when the handler defers; the handler code is otherwise untouched (the `async` arg injection is a single wrap of the schema at registration, `sh_module.lua`). Blocking stays the default, so nothing existing changes.
+
+Why it exists: a blocking wait can't be interleaved with the tool calls that CAUSE its condition (you can't issue them while blocked), and no single blocking call can exceed the host's ~60 s ceiling (`RunFor` clamps at `HARD_MAX_SECONDS = 60` too). Async removes both limits.
+
+- **Registry** (`lua/mcp/libraries/libraries/sh_jobs.lua`, per-realm): `MCP._jobs` keyed by `mcp_job_<seq>`; `RegisterJob`/`CompleteJob` (guarded on `armed`, idempotent)/`CancelJob`/`SweepJobs` (TTL-reaps finished ~300 s, and orphaned armed past `deadline`). Modelled on the interactive recorder's arm → slot → fill → collect/forget → sweep lifecycle, generalized.
+- **`job_collect` / `job_cancel` / `job_list`** (`functions/sh_job_*.lua`, both realms, **ungated** — they only touch a slot the already-gated `async` arm made). `job_collect` block-or-polls (returns the tool's own result verbatim, same shape as a sync call; forgets on collect; `pending` to re-poll) — the exact debug_record_read shape. Collect on the realm you armed.
+- **Passive completion**: `CompleteJob` pushes a `kind = "job"` event onto the events ring (`RecordEvent`, `sh_capture.lua`), so a finish rides the **next** tool response's `events` and shows in `console_read` — the model learns a job finished without polling. Lightweight notice (job_id + ok/error + a `path` if present); the full result stays in `job_collect`. This is the same rail passive console/error output uses (there is no server→model push).
+- **Cancellation seam**: an asyncable tool registers `ctx.onCancel(teardown)` — teardown removes its hooks / releases side effects but does **not** respond (the registry owns the terminal state). `RunFor`/`Settle` now return a silent-cancel closure for RunFor-based tools; hand-rolled tools pass their own cleanup. `onCancel` is optional — without it cancel is "soft" (mark cancelled, let the tool's own cap expire the hooks).
+- **.NET**: a media tool returning a `content` array skips the whole-result JSON dump, so `BuildContent` (`Program.cs`) explicitly re-surfaces `events` as a trailing text block — else a passive job completion landing on an inline-screenshot response would be dropped (its cursor already advanced).
+
+Asyncable tools: **`screenshot`, `lua_run`, `player_walk`, `debug_record`, `player_lua_run`** — the long/conditional waiters. The sub-2 s settle mutators (`cvar_set`, `player_set`, `entity_set`/`remove`, `bot_remove`) are deliberately **not** asyncable: they settle before you could interleave anything and never approach the 60 s ceiling. Adding a new asyncable tool is a flag plus an optional `ctx.onCancel` line.
+
 ## Tooling
 
 - `.luarc.json` configures sumneko-LuaLS with `./.tools/glua-api` (GLua type stubs).

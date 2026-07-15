@@ -219,6 +219,7 @@ MCP:AddFunction({
     -- `unsafe` -- the rest of player_walk stays ungated. Dispatch rejects a gated arg
     -- when ungranted before the handler runs.
     arg_requires = { ["until"] = { "unsafe" }, sample_expr = { "unsafe" } },
+    asyncable = true,
     description = CLIENT and clientDesc or serverDesc,
     schema = schema,
     handler = function(args, ctx)
@@ -592,6 +593,7 @@ MCP:AddFunction({
             if stopWhenStuck and hasMovement and (now - lastProgress) >= STUCK_GRACE then return finish("stuck") end
             if now >= hardDeadline then return finish("duration") end
         end)
+        ctx.onCancel(cleanup)
 
         return ctx.deferred
     end,

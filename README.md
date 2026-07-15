@@ -96,6 +96,12 @@ Dispatched into the running game over the file bridge. The framework appends `_s
 | `game_state_sv` | server | — | Structured snapshot of server-wide game state in one read -- current map, gamemode, hostname, singleplayer/dedicated flags, max player slots, player/bot/human counts, a lean roster of every player (name/userid/entindex/is_bot/is_host/team -- drill into one with player_state or entity_state), a `tuning` block with the live values of game_set's knobs (gravity, timescale, phys_timescale, fakelag), and `cheats_enabled` (sv_cheats) -- which gates whether game_set's timescale/fakelag will take. |
 | `hook_call_cl` | client | `unsafe` | Fire a GMod hook and report the result -- the dispatch companion to debug_hooks (which only reads the registry). |
 | `hook_call_sv` | server | `unsafe` | Fire a GMod hook and report the result -- the dispatch companion to debug_hooks (which only reads the registry). |
+| `job_cancel_cl` | client | — | Abort a background job started with async=true, tearing down its hooks and side effects immediately (e.g. |
+| `job_cancel_sv` | server | — | Abort a background job started with async=true, tearing down its hooks and side effects immediately (e.g. |
+| `job_collect_cl` | client | — | Fetch the result of a background job started by calling a tool with async=true, identified by the `job_id` the arm returned. |
+| `job_collect_sv` | server | — | Fetch the result of a background job started by calling a tool with async=true, identified by the `job_id` the arm returned. |
+| `job_list_cl` | client | — | List background jobs (from async=true arms) in this realm: job_id, the tool, status (armed / finished / cancelled), seconds elapsed since arming, and whether it's collectable now. |
+| `job_list_sv` | server | — | List background jobs (from async=true arms) in this realm: job_id, the tool, status (armed / finished / cancelled), seconds elapsed since arming, and whether it's collectable now. |
 | `light_projected_cl` | client | — | Create, update, or remove a clientside ProjectedTexture -- a spotlight test-light rig, the projected-light sibling of debug_draw. |
 | `lua_run_cl` | client | `unsafe` | Compile and execute Lua source in this realm. |
 | `lua_run_sv` | server | `unsafe` | Compile and execute Lua source in this realm. |

@@ -26,6 +26,7 @@ MCP:AddFunction({
         required = { "code" },
     },
     requires = { "unsafe" },
+    asyncable = true,
     handler = function(args, ctx)
         local code = args.code
         if type(code) ~= "string" or code == "" then
@@ -55,7 +56,7 @@ MCP:AddFunction({
         -- Timeout / disconnect fallback: stop as soon as the reply clears the pending entry (the net
         -- handler responded) or the target goes invalid. ctx.respond is single-shot, so a reply that
         -- lands first wins and this is a no-op.
-        MCP:RunFor({
+        local cancelWait = MCP:RunFor({
             seconds = TIMEOUT,
             stop = function()
                 return not (MCP._luarunPending and MCP._luarunPending[token]) or not IsValid(ply)
@@ -71,6 +72,10 @@ MCP:AddFunction({
                     or ("no reply from client within " .. TIMEOUT .. "s"),
                 target = identity,
             })
+        end)
+        ctx.onCancel(function()
+            cancelWait()
+            MCP.luarun.Cancel(token)
         end)
 
         return ctx.deferred

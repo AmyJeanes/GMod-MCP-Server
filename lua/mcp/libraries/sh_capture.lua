@@ -18,10 +18,13 @@ MCP._eventSeq = MCP._eventSeq or 0     -- process-monotonic; survives mcp_reload
 
 -- Append an event to the ring. Source gating (mcp_enable/level) is handled by
 -- what's installed in ApplyCaptureState; this stays cheap and guards only
--- against the two ways it could double-count or recurse.
+-- against the two ways it could double-count or recurse. `extra` (optional) is
+-- merged into the event so structured channels (e.g. job completions carrying a
+-- job_id) can add fields without a parallel ring.
 ---@param kind string
 ---@param text string
-function MCP:RecordEvent(kind, text)
+---@param extra table?
+function MCP:RecordEvent(kind, text, extra)
     -- Output produced synchronously inside a handler is already captured by
     -- captureRun and attached to that response; don't also log it here.
     if MCP._inDispatch then return end
@@ -35,12 +38,18 @@ function MCP:RecordEvent(kind, text)
     MCP._recording = true
     MCP._eventSeq = MCP._eventSeq + 1
     local events = MCP._events
-    events[#events + 1] = {
+    local ev = {
         seq = MCP._eventSeq,
         time = RealTime(),
         kind = kind,
         text = text,
     }
+    if type(extra) == "table" then
+        for k, v in pairs(extra) do
+            if ev[k] == nil then ev[k] = v end
+        end
+    end
+    events[#events + 1] = ev
     while #events > MAX_EVENTS do
         table.remove(events, 1)
     end

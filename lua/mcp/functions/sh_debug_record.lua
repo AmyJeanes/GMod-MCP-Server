@@ -26,6 +26,7 @@ MCP:AddFunction({
     requires = { "unsafe" },
     -- Blocking past the host's 10s default; declare the window + slack (host clamps to its max).
     timeout = MAX_SECONDS + 3,
+    asyncable = true,
     schema = {
         type = "object",
         properties = {
@@ -141,7 +142,7 @@ MCP:AddFunction({
             end
         end
 
-        MCP:RunFor({
+        local cancelWait = MCP:RunFor({
             seconds = seconds,
             stop = function() return sampler.doneReason ~= nil end,
         }, function(r)
@@ -156,6 +157,10 @@ MCP:AddFunction({
             }
             for k, v in pairs(block) do result[k] = v end
             ctx.respond(result)
+        end)
+        ctx.onCancel(function()
+            cancelWait()
+            hook.Remove(hookPoint, hookId)
         end)
 
         return ctx.deferred

@@ -25,8 +25,12 @@ local HARD_MAX_SECONDS = 60 -- backstop so a misconfigured loop can't sample for
 --   stop     -> the stop condition fired (ended early)
 --   duration -> hit the seconds cap
 --   error    -> on_each/stop threw (caught); `error` holds the message
+-- Returns a silent-cancel closure: calling it stops the loop WITHOUT firing onDone
+-- (for the async job layer's job_cancel, which owns the terminal state). Existing
+-- callers ignore the return.
 ---@param opts table
 ---@param onDone fun(result: table)?
+---@return fun() cancel
 function MCP:RunFor(opts, onDone)
     opts = opts or {}
     local seconds = tonumber(opts.seconds)
@@ -83,14 +87,22 @@ function MCP:RunFor(opts, onDone)
 
         if elapsed >= seconds then return finish("duration") end
     end)
+
+    return function()
+        if done then return end
+        done = true
+        hook.Remove("Think", hookId)
+    end
 end
 
 -- opts: { check (required, function(elapsed) -> truthy = "settled now"), stable_for?, seconds (required), on_each?, interval? }
 -- onDone({ settled, reason, elapsed, ticks, error? })
 --   settled is true only when `check` held continuously for `stable_for` (reason "stop");
 --   a timeout (reason "duration") or a `check` error (reason "error") reports settled = false.
+-- Returns the underlying RunFor's silent-cancel closure (see RunFor).
 ---@param opts table
 ---@param onDone fun(result: table)?
+---@return fun() cancel
 function MCP:Settle(opts, onDone)
     opts = opts or {}
     if type(opts.check) ~= "function" then
@@ -100,7 +112,7 @@ function MCP:Settle(opts, onDone)
     local stableFor = math.max(tonumber(opts.stable_for) or 0, 0)
     local stableSince
 
-    self:RunFor({
+    return self:RunFor({
         seconds = opts.seconds,
         on_each = opts.on_each,
         interval = opts.interval,

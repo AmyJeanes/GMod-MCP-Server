@@ -288,7 +288,7 @@ internal static class Program
     /// entry is mapped to its native block type. Otherwise the whole result
     /// JSON is dumped as a single text block, preserving the legacy behaviour.
     /// </summary>
-    private static List<ContentBlock> BuildContent(JsonNode? result, string fallbackJson, string dataPath)
+    internal static List<ContentBlock> BuildContent(JsonNode? result, string fallbackJson, string dataPath)
     {
         if (result is JsonObject obj
             && obj.TryGetPropertyValue("content", out var contentNode)
@@ -327,11 +327,29 @@ internal static class Program
             if (blocks.Count > 0)
             {
                 AppendAbsolutePath(blocks, result, dataPath);
+                AppendPassiveEvents(blocks, result);
                 return blocks;
             }
         }
 
         return new List<ContentBlock> { new TextContentBlock { Text = fallbackJson } };
+    }
+
+    /// <summary>
+    /// Passive events — console output, Lua errors, and background-job completions
+    /// (sh_jobs.lua) — ride back on a response's <c>events</c> array, attached by
+    /// sh_filebridge.lua. The text-fallback path surfaces them inside the whole-result
+    /// JSON dump, but the content-array path (image/audio tools) returns before that,
+    /// so without this they'd be dropped — and their per-session cursor has already
+    /// advanced, losing them for good. Re-surface them as a trailing text block so a
+    /// passive job completion survives even when the next tool call returns media.
+    /// </summary>
+    private static void AppendPassiveEvents(List<ContentBlock> blocks, JsonNode? result)
+    {
+        if (result is not JsonObject obj) return;
+        if (!obj.TryGetPropertyValue("events", out var node)) return;
+        if (node is not JsonArray arr || arr.Count == 0) return;
+        blocks.Add(new TextContentBlock { Text = "events: " + arr.ToJsonString() });
     }
 
     /// <summary>
