@@ -122,13 +122,15 @@ MCP:AddFunction({
     handler = function(args)
         args = args or {}
 
-        local hasClass = type(args.class) == "string" and args.class ~= ""
+        ---@type string?
+        local class
+        if type(args.class) == "string" and args.class ~= "" then class = args.class end
         local hasModel = type(args.model) == "string" and args.model ~= ""
         local radius = tonumber(args.radius)
         local box = type(args.box) == "table" and args.box or nil
         local wantAll = args.all == true
 
-        if not (hasClass or hasModel or radius or box or wantAll) then
+        if not (class or hasModel or radius or box or wantAll) then
             return { ok = false, error = "specify at least one of: class, model, radius (with around/point), box, all" }
         end
 
@@ -178,8 +180,8 @@ MCP:AddFunction({
                 center, centerSource = h:GetPos(), "host"
             end
             baseSet = ents.FindInSphere(center, radius)
-        elseif hasClass then
-            baseSet = ents.FindByClass(args.class)
+        elseif class then
+            baseSet = ents.FindByClass(class)
         else
             baseSet = ents.GetAll()
         end
@@ -190,7 +192,7 @@ MCP:AddFunction({
             if IsValid(h) then center, centerSource = h:GetPos(), "host" end
         end
 
-        local classMatch = hasClass and classMatcher(args.class) or nil
+        local classMatch = class and classMatcher(class) or nil
         local modelLower = hasModel and string.lower(args.model) or nil
 
         local rows = {}

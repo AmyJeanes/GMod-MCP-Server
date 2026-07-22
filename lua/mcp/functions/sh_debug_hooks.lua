@@ -74,6 +74,8 @@ MCP:AddFunction({
                         if #rows < limit then
                             local row = { event = ev, name = idStr, is_string_name = isStr }
                             if includeSource and isfunction(fn) then
+                                -- GMod's debug.getinfo is (funcOrStackLevel, fields); the annotation models stock Lua's 3-arg form
+                                ---@diagnostic disable-next-line: param-type-mismatch
                                 local ok, info = pcall(debug.getinfo, fn, "S")
                                 if ok and info then
                                     row.source = info.short_src

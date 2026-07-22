@@ -92,6 +92,7 @@ end
 -- value is any Lua value being serialized for the JSON response path.
 ---@param value any
 ---@param opts table?
+---@return any # serialized mirror of the input (tables stay tables; leaves may become marker strings)
 function MCP.util.Serialize(value, opts)
     opts = opts or {}
     local state = {
@@ -109,6 +110,7 @@ end
 -- IsValid(e) and e:Foo() guard boilerplate that was the corpus's #1 error source.
 -- obj is any object (entity, player, ...) being feature-tested/read.
 ---@param obj any
+---@return fun(method: string, ...: any): any
 function MCP.util.Getter(obj)
     return function(method, ...)
         local fn = obj[method]
