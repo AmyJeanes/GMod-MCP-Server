@@ -94,7 +94,7 @@ local function inSolid(ply, pos)
         mins = ply:OBBMins(),
         maxs = ply:OBBMaxs(),
         filter = ply,
-        mask = MASK_PLAYERSOLID --[[@as MASK]],
+        mask = MASK_PLAYERSOLID,
     })
     return tr.StartSolid == true or tr.AllSolid == true
 end
@@ -358,8 +358,8 @@ MCP:AddFunction({
                 in_solid = inSolid(ply, endPos),
                 movetype = MOVETYPE_NAMES[ply:GetMoveType()] or tostring(ply:GetMoveType()),
                 pinned = ply:GetMoveType() == MOVETYPE_NONE,
-                controls_locked = ply:IsFlagSet(FL_FROZEN --[[@as FL]]),
-                godmode = ply:IsFlagSet(FL_GODMODE --[[@as FL]]),
+                controls_locked = ply:IsFlagSet(FL_FROZEN),
+                godmode = ply:IsFlagSet(FL_GODMODE),
                 target = {
                     name = ply:Nick(),
                     userid = ply:UserID(),

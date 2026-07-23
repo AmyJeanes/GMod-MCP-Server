@@ -43,9 +43,9 @@ local function snapshot(ply)
         movetype = MCP.util.DecodeEnum("MOVETYPE_", get("GetMoveType")),
         on_ground = get("OnGround"),
         crouching = get("Crouching"),
-        ducking = ply:IsFlagSet(FL_DUCKING --[[@as FL]]),
-        frozen = ply:IsFlagSet(FL_FROZEN --[[@as FL]]),
-        godmode = ply:IsFlagSet(FL_GODMODE --[[@as FL]]),
+        ducking = ply:IsFlagSet(FL_DUCKING),
+        frozen = ply:IsFlagSet(FL_FROZEN),
+        godmode = ply:IsFlagSet(FL_GODMODE),
         water_level = get("WaterLevel"),
 
         -- view / hull -- the crouch-desync surface

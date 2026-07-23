@@ -442,7 +442,7 @@ MCP:AddFunction({
                 max_speed = math.Round(maxSpeed, 1),
                 ever_airborne = everAirborne,
                 movetype = MOVETYPE_NAMES[ply:GetMoveType()] or tostring(ply:GetMoveType()),
-                frozen = ply:IsFlagSet(FL_FROZEN --[[@as FL]]),
+                frozen = ply:IsFlagSet(FL_FROZEN),
                 teleported = teleported,
                 view_hold_released = viewReleased,
                 trajectory = downsample(samples, MAX_TRAJECTORY),

@@ -47,7 +47,7 @@ local function inSolid(ent, pos)
         mins = ent:OBBMins(),
         maxs = ent:OBBMaxs(),
         filter = ent,
-        mask = MASK_SOLID --[[@as MASK]],
+        mask = MASK_SOLID,
     })
     return tr.StartSolid == true or tr.AllSolid == true
 end
