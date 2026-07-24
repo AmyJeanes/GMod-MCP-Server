@@ -313,18 +313,19 @@ MCP:AddFunction({
 
         -- Sample hook (local capture only): active while recording. Records via the shared sampler,
         -- then updates the live flag counter and HUD readout off the freshly-updated state.
-        if r.sampler then
+        local recSampler = r.sampler
+        if recSampler then
             hook.Add(r.hookPoint, r.sampleId, function(...)
                 if r.phase ~= "recording" then return end
-                local reason = r.sampler:Fire(...)
+                local reason = recSampler:Fire(...)
                 if reason ~= "error" then
                     if r.flagFn then
-                        local ok, res = pcall(r.flagFn, r.sampler.state, ...)
+                        local ok, res = pcall(r.flagFn, recSampler.state, ...)
                         if ok and res then
                             r.flags = r.flags + 1
                             if #r.flagged < FLAGGED_CAP then
                                 r.flagged[#r.flagged + 1] = {
-                                    t = math.Round(RealTime() - r.sampler.start, 3),
+                                    t = math.Round(RealTime() - recSampler.start, 3),
                                     ct = math.Round(CurTime(), 3),
                                     v = MCP.util.Serialize(res, { max_depth = 4, max_nodes = 40 }),
                                 }
@@ -332,10 +333,10 @@ MCP:AddFunction({
                         end
                     end
                     if r.hudFn then
-                        local ok, txt = pcall(r.hudFn, r.sampler.state, ...)
+                        local ok, txt = pcall(r.hudFn, recSampler.state, ...)
                         if ok and txt ~= nil then r.readout = tostring(txt) end
-                    elseif r.sampler.lastValue ~= nil then
-                        r.readout = tostring(r.sampler.lastValue)
+                    elseif recSampler.lastValue ~= nil then
+                        r.readout = tostring(recSampler.lastValue)
                     end
                 end
                 if reason then r.recEnd = reason end
@@ -348,10 +349,10 @@ MCP:AddFunction({
         hook.Add("Think", r.thinkId, function()
             if r.phase == "countdown" then
                 if SysTime() - r.armedAt >= r.countdown then
-                    if r.sampler then
-                        r.sampler:Reset()
-                        r.sampler.state = {}
-                        if r.initFn then pcall(r.initFn, r.sampler.state) end
+                    if recSampler then
+                        recSampler:Reset()
+                        recSampler.state = {}
+                        if r.initFn then pcall(r.initFn, recSampler.state) end
                     end
                     r.flags = 0
                     r.flagged = {}
@@ -383,8 +384,8 @@ MCP:AddFunction({
                 local remStr = fmtRemaining(r.seconds - (SysTime() - r.recStartedAt))
                 surface.SetDrawColor(190, 0, 0, 235)
                 surface.DrawRect(cx - 175, h * 0.06, 350, 58)
-                if r.sampler then
-                    local n = #r.sampler.buffer
+                if recSampler then
+                    local n = #recSampler.buffer
                     draw.SimpleText("\226\151\143 REC  " .. remStr .. "   [" .. n .. "]", "mcp_rec_med", cx, h * 0.06 + 29, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     local y = h * 0.06 + 80
                     if r.flagFn then

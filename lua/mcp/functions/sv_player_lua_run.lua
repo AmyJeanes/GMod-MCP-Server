@@ -28,6 +28,7 @@ MCP:AddFunction({
     requires = { "unsafe" },
     asyncable = true,
     handler = function(args, ctx)
+        ---@type any
         local code = args.code
         if type(code) ~= "string" or code == "" then
             return { ok = false, error = "missing or non-string `code` argument" }

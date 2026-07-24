@@ -82,7 +82,7 @@ local function processOne(filename)
     if req.function_id == "_ping" then
         local resp = {
             ok = true,
-            enabled = GetConVar("mcp_enable"):GetBool(),
+            enabled = assert(GetConVar("mcp_enable")):GetBool(),
             realm = MCP.util.RealmName(),
             map = game.GetMap(),
             -- Lets the host report singleplayer vs listen server without a
@@ -110,7 +110,7 @@ local function processOne(filename)
         -- written at registration and goes stale if a convar is flipped afterward).
         local caps = {}
         for id, cap in pairs(MCP._capabilities or {}) do
-            caps[id] = GetConVar(cap.convar):GetBool()
+            caps[id] = assert(GetConVar(cap.convar)):GetBool()
         end
         resp.capabilities = caps
         -- Client realm only: the host pairs this with its own GetForegroundWindow
@@ -149,10 +149,11 @@ local function processOne(filename)
         return
     end
 
+    local reqId = req.id
     local response = MCP:Dispatch(req.function_id, req.args, function(deferredResponse)
-        attachEvents(req.id, deferredResponse)
-        writeResponse(req.id, deferredResponse)
-    end, req.id)
+        attachEvents(reqId, deferredResponse)
+        writeResponse(reqId, deferredResponse)
+    end, reqId)
     -- Sync handlers return the response directly; deferred handlers return nil
     -- and resolve later via the respondLater callback above.
     if response then
@@ -181,7 +182,7 @@ local function pollTick()
     clientHostGate()
 
     local now = RealTime()
-    local interval = math.max(0.05, GetConVar("mcp_poll_interval"):GetFloat())
+    local interval = math.max(0.05, assert(GetConVar("mcp_poll_interval")):GetFloat())
     if (now - MCP._lastPoll) < interval then return end
     MCP._lastPoll = now
 
@@ -207,7 +208,7 @@ end
 -- until the player closes the menu.
 local function applyPauseGuard()
     if not SERVER then return end
-    if not GetConVar("mcp_enable"):GetBool() then return end
+    if not assert(GetConVar("mcp_enable")):GetBool() then return end
     local pauseSp = GetConVar("sv_pause_sp")
     if pauseSp and pauseSp:GetBool() then
         -- RunConsoleCommand rather than :SetBool because sv_pause_sp is an

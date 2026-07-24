@@ -31,7 +31,7 @@ end)
 function MCP:RequestLevelChange(args)
     args = args or {}
 
-    if not GetConVar("mcp_enable"):GetBool() then
+    if not assert(GetConVar("mcp_enable")):GetBool() then
         return { ok = false, error = "MCP bridge is disabled. In the GMod console, run `mcp_enable 1` to allow level changes." }
     end
 

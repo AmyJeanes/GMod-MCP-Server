@@ -49,6 +49,7 @@ MCP:AddFunction({
         if not gotClass then
             return { ok = true, index = idx, valid = false }
         end
+        ---@cast ent Entity
 
         local get = MCP.util.Getter(ent)
         local r = {

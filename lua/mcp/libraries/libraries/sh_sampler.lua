@@ -120,6 +120,7 @@ function Sampler:Fire(...)
 
     local due = self.interval <= 0 or not self.lastSampleT or (now - self.lastSampleT) >= self.interval
     if stopHit or due then
+        ---@type boolean, any
         local ok, val = pcall(self.sampleFn, self.state, ...)
         if not ok then self.doneReason, self.doneErr = "error", tostring(val) return self.doneReason end
         if val ~= nil then

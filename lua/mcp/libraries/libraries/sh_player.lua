@@ -25,6 +25,8 @@ end
 -- no host shortcut, only entindex/name with a warning). Messages name only the permitted set.
 ---@param args table
 ---@param opts table?
+---@return Player[]? subjects
+---@return string? err
 function MCP.player.Resolve(args, opts)
     args = args or {}
     opts = opts or {}
@@ -93,6 +95,9 @@ function MCP.player.Resolve(args, opts)
             if p:Nick() == want then return { p } end
         end
         local lw = string.lower(want)
+        -- glua_ls 1.1.1 regression: an empty `---@type T[]` literal filled by index-append
+        -- reports `Cannot assign { T } to T[]`; clean on 1.1.0 and clean via table.insert.
+        ---@diagnostic disable-next-line: assign-type-mismatch
         ---@type Player[]
         local matches = {}
         for _, p in ipairs(player.GetAll()) do
@@ -120,7 +125,7 @@ function MCP.player.Resolve(args, opts)
         if not idx then return nil, "`entindex` must be a number" end
         local e = Entity(idx)
         if not IsValid(e) or not e:IsPlayer() then return nil, "entity " .. tostring(idx) .. " is not a valid player" end
-        return { e }
+        return { e --[[@as Player]] }
     end
 
     local want = tostring(args.steamid)

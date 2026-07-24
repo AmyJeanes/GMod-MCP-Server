@@ -74,6 +74,7 @@ MCP:AddFunction({
             local e = Entity(idx)
             local ok, why = removable(e)
             if not ok then return { ok = false, error = "entity " .. tostring(idx) .. " " .. why } end
+            ---@cast e Entity
             targets[1] = e
         elseif mode == "class" then
             local pat = tostring(args.class)

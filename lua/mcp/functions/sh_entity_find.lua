@@ -35,6 +35,7 @@ end
 -- query instead of drilling each index with entity_state (the N+1 the scan flagged). Each is
 -- pcall'd per row so a getter that errors just omits its field. Defined at file scope (closures
 -- only, no game-global access at load) so registration stays generator-safe.
+---@type table<string, fun(e: Entity): any>
 local ROW_FIELDS = {
     angles = function(e) return e:GetAngles() end,
     velocity = function(e) return e:GetVelocity() end,

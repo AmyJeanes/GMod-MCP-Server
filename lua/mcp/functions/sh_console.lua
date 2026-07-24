@@ -25,6 +25,7 @@ MCP:AddFunction({
     },
     requires = { "unsafe" },
     handler = function(args)
+        ---@type any
         local command = args.command
         if type(command) ~= "string" or command == "" then
             return { ok = false, error = "missing or empty `command` argument" }

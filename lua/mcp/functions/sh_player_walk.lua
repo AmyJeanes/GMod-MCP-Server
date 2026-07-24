@@ -465,9 +465,8 @@ MCP:AddFunction({
         local function viewAngleFor(dt)
             if lookAtPoint then
                 return (lookAtPoint - ply:EyePos()):Angle()
-            elseif lookAtEnt then
-                if IsValid(lookAtEnt) then return (lookAtEnt:WorldSpaceCenter() - ply:EyePos()):Angle() end
-                return nil
+            elseif IsValid(lookAtEnt) then
+                return (lookAtEnt:WorldSpaceCenter() - ply:EyePos()):Angle()
             elseif spinAng then
                 spinAng.y = spinAng.y + yawRate * dt
                 spinAng.p = math.Clamp(spinAng.p + pitchRate * dt, -89, 89)

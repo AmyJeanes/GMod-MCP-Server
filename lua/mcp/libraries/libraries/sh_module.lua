@@ -262,7 +262,7 @@ end
 local function capGrant(self, capId)
     local cap = self._capabilities[capId]
     if not cap then return "missing" end
-    if not GetConVar(cap.convar):GetBool() then return "disabled", cap.convar end
+    if not assert(GetConVar(cap.convar)):GetBool() then return "disabled", cap.convar end
     return "ok"
 end
 
@@ -372,7 +372,7 @@ end
 ---@param response table
 ---@param elapsedMs number
 local function logDispatch(funcId, args, response, elapsedMs)
-    local level = GetConVar("mcp_debug"):GetInt()
+    local level = assert(GetConVar("mcp_debug")):GetInt()
     if level <= 0 then return end
 
     local realm = MCP.util.RealmName()
@@ -410,7 +410,7 @@ function MCP:Dispatch(funcId, args, respondLater, reqId)
 
     -- Master switch: bridge polling always runs, but tool execution requires
     -- explicit user consent via the mcp_enable convar.
-    if not GetConVar("mcp_enable"):GetBool() then
+    if not assert(GetConVar("mcp_enable")):GetBool() then
         response = {
             ok = false,
             error = "MCP bridge is disabled. In the GMod console, run `mcp_enable 1` to allow tool dispatch.",
@@ -528,7 +528,7 @@ function MCP:BuildManifest()
             description = cap.description,
             default = cap.default,
             convar = cap.convar,
-            current = GetConVar(cap.convar):GetBool(),
+            current = assert(GetConVar(cap.convar)):GetBool(),
         }
     end
 

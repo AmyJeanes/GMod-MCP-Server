@@ -121,9 +121,6 @@ MCP:AddFunction({
             filter = resolveFilter(args.filter),
         }
         if mins then td.mins, td.maxs = mins, maxs end
-        -- The glua-api stub mistypes the trace `filter` field as table<Entity> (an
-        -- Entity-keyed map) when the API takes a sequential Entity[]; our list is correct.
-        ---@diagnostic disable-next-line: param-type-mismatch
         local tr = mins and util.TraceHull(td) or util.TraceLine(td)
 
         local r = MCP.trace.HitBlock(tr, start)

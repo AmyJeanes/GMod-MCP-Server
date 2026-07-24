@@ -258,6 +258,7 @@ MCP:AddFunction({
         -- Confirm a placement: wait for rest, then report where it landed. Gate on
         -- velocity (not position) so a from-rest fall can't false-settle its first frames.
         if pos and not velocity then
+            local reqPos = pos
             MCP:Settle({
                 seconds = SETTLE_CAP,
                 stable_for = STILL_DWELL,
@@ -271,9 +272,9 @@ MCP:AddFunction({
                 ctx.respond(snapshot({
                     settled = s.settled,
                     settle_time = math.Round(s.elapsed, 2),
-                    moved_after_place = math.Round(endPos:Distance(pos), 1),
+                    moved_after_place = math.Round(endPos:Distance(reqPos), 1),
                     in_solid = inSolid(ent, endPos),
-                    requested_pos = { math.Round(pos.x, 1), math.Round(pos.y, 1), math.Round(pos.z, 1) },
+                    requested_pos = { math.Round(reqPos.x, 1), math.Round(reqPos.y, 1), math.Round(reqPos.z, 1) },
                     start_pos = { math.Round(startPos.x, 1), math.Round(startPos.y, 1), math.Round(startPos.z, 1) },
                 }))
             end)
