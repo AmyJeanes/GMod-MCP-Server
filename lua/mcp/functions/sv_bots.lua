@@ -16,8 +16,7 @@ local function resolveBot(args)
         end
         if not p then
             local lw = string.lower(want)
-            -- glua_ls 1.1.1 regression: an empty `---@type T[]` literal filled by index-append
-            -- reports `Cannot assign { T } to T[]`; clean on 1.1.0 and clean via table.insert.
+            -- glua_ls upstream: empty literal loses its declared type -- https://github.com/Pollux12/gmod-glua-ls/issues/50
             ---@diagnostic disable-next-line: assign-type-mismatch
             ---@type Player[]
             local matches = {}

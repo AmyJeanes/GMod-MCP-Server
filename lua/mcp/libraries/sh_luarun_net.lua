@@ -106,8 +106,7 @@ else
             return origMsgC(color, ...)
         end
 
-        -- glua_ls 1.1.1 regression: a multi-return expanded into an argument list reports a
-        -- nonsense `expected boolean but found boolean`.
+        -- glua_ls upstream: multi-return expanded into an arg list -- https://github.com/Pollux12/gmod-glua-ls/issues/47
         ---@diagnostic disable-next-line: param-type-mismatch
         local ok, count, rets = packResults(pcall(fn))
 
