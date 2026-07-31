@@ -27,9 +27,8 @@ end
 local function resolveArgs(list)
     local out, n = {}, 0
     if istable(list) then
-        local arr = list --[[@as table]] -- istable() already confirmed non-nil; custom predicate, analyzer can't narrow it
-        n = #arr
-        for i = 1, n do out[i] = resolveArg(arr[i]) end
+        n = #list
+        for i = 1, n do out[i] = resolveArg(list[i]) end
     end
     return out, n
 end
