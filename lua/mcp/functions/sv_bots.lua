@@ -34,7 +34,7 @@ local function resolveBot(args)
         if not idx then return nil, "`entindex` must be a number" end
         local e = Entity(idx)
         if not IsValid(e) or not e:IsPlayer() then return nil, "entity " .. tostring(idx) .. " is not a valid player" end
-        p = e --[[@as Player]]
+        p = e
     end
     if not IsValid(p) then return nil, "could not resolve a target player" end
     if not p:IsBot() then return nil, "target '" .. p:Nick() .. "' is not a bot -- bot_remove only kicks bots" end

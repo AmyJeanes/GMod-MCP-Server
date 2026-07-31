@@ -201,7 +201,7 @@ MCP:AddFunction({
 
         local list, terr = MCP.player.Resolve(args, { allow_all = false })
         if not list then return { ok = false, error = terr } end
-        local ply = list[1] --[[@as Player]]
+        local ply = list[1]
 
         local reqPos
         if args.pos ~= nil then

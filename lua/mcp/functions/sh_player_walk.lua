@@ -235,7 +235,7 @@ MCP:AddFunction({
         else
             local list, terr = MCP.player.Resolve(args, { allow_all = false, allow_host = false })
             if not list then return { ok = false, error = terr } end
-            ply = list[1] --[[@as Player]]
+            ply = list[1]
             -- Driving the host server-side works (prediction reconciles cleanly for steady
             -- motion) but isn't the faithful path, so warn rather than refuse.
             if ply:IsListenServerHost() then

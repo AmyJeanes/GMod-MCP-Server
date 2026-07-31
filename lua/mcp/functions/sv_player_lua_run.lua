@@ -42,7 +42,7 @@ MCP:AddFunction({
 
         local players, err = MCP.player.Resolve(args, { allow_all = false })
         if not players then return { ok = false, error = err } end
-        local ply = players[1] --[[@as Player]]
+        local ply = players[1]
         if not IsValid(ply) then return { ok = false, error = "target player is not valid" } end
         if ply:IsBot() then return { ok = false, error = "target is a bot; bots have no client Lua state" } end
 

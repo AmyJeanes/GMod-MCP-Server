@@ -121,7 +121,7 @@ function MCP.player.Resolve(args, opts)
         if not idx then return nil, "`entindex` must be a number" end
         local e = Entity(idx)
         if not IsValid(e) or not e:IsPlayer() then return nil, "entity " .. tostring(idx) .. " is not a valid player" end
-        return { e --[[@as Player]] }
+        return { e }
     end
 
     local want = tostring(args.steamid)
