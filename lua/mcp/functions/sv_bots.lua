@@ -16,9 +16,6 @@ local function resolveBot(args)
         end
         if not p then
             local lw = string.lower(want)
-            -- glua_ls upstream: empty literal loses its declared type -- https://github.com/Pollux12/gmod-glua-ls/issues/50
-            ---@diagnostic disable-next-line: assign-type-mismatch
-            ---@type Player[]
             local matches = {}
             for _, q in ipairs(player.GetAll()) do
                 if string.find(string.lower(q:Nick()), lw, 1, true) then matches[#matches + 1] = q end

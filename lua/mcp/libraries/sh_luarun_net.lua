@@ -106,8 +106,6 @@ else
             return origMsgC(color, ...)
         end
 
-        -- glua_ls upstream: multi-return expanded into an arg list -- https://github.com/Pollux12/gmod-glua-ls/issues/47
-        ---@diagnostic disable-next-line: param-type-mismatch
         local ok, count, rets = packResults(pcall(fn))
 
         _G.print, _G.Msg, _G.MsgN, _G.MsgC = origPrint, origMsg, origMsgN, origMsgC

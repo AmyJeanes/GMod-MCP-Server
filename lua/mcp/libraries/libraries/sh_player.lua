@@ -95,9 +95,6 @@ function MCP.player.Resolve(args, opts)
             if p:Nick() == want then return { p } end
         end
         local lw = string.lower(want)
-        -- glua_ls upstream: empty literal loses its declared type -- https://github.com/Pollux12/gmod-glua-ls/issues/50
-        ---@diagnostic disable-next-line: assign-type-mismatch
-        ---@type Player[]
         local matches = {}
         for _, p in ipairs(player.GetAll()) do
             if string.find(string.lower(p:Nick()), lw, 1, true) then matches[#matches + 1] = p end
