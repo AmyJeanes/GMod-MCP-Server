@@ -10,9 +10,18 @@
 -- this file; fine -- both tools touch MCP.game only inside handlers, and game_set's knob
 -- schema is an inline literal (no file-load reference).
 
+---@class mcp_game_knob
+---@field convar string
+---@field min number
+---@field max number
+---@field cheat boolean? FCVAR_CHEAT, so the write is rejected unless sv_cheats is on
+
+---@class mcp_game
+---@field KNOBS table<string, mcp_game_knob>
+
+---@type mcp_game
 MCP.game = MCP.game or {}
 
----@type table<string, { convar: string, min: number, max: number, cheat: boolean? }>
 MCP.game.KNOBS = {
     gravity        = { convar = "sv_gravity",     min = 0,    max = 10000 },
     timescale      = { convar = "host_timescale", min = 0.01, max = 10,   cheat = true },

@@ -58,7 +58,7 @@ MCP:AddFunction({
         args = args or {}
         MCP._gameRestores = MCP._gameRestores or {} -- convar -> token of the owning pending revert
 
-        ---@type table<string, { def: { convar: string, min: number, max: number, cheat: boolean? }, cv: ConVar, value: number, raw: number, before: number? }>
+        ---@type table<string, { def: mcp_game_knob, cv: ConVar, value: number, raw: number, before: number? }>
         local requested = {}
         local count = 0
         for name, def in pairs(MCP.game.KNOBS) do
@@ -67,10 +67,7 @@ MCP:AddFunction({
                 if not raw then return { ok = false, error = "`" .. name .. "` must be a number" } end
                 local cv = GetConVar(def.convar)
                 if not cv then return { ok = false, error = "convar '" .. def.convar .. "' not found" } end
-                -- glua_ls 1.1.2: a pairs() value over a typed map reads nilable, so it will not go
-                -- straight into the non-optional def field below.
-                local knobDef = def --[[@as { convar: string, min: number, max: number, cheat: boolean? }]]
-                requested[name] = { def = knobDef, cv = cv, value = math.Clamp(raw, knobDef.min, knobDef.max), raw = raw }
+                requested[name] = { def = def, cv = cv, value = math.Clamp(raw, def.min, def.max), raw = raw }
                 count = count + 1
             end
         end
