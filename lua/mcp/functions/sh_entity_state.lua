@@ -49,6 +49,7 @@ MCP:AddFunction({
         if not gotClass then
             return { ok = true, index = idx, valid = false }
         end
+        -- The pcall succeeding is the validity proof here, but pcall never narrows on its ok.
         ---@cast ent Entity
 
         local get = MCP.util.Getter(ent)

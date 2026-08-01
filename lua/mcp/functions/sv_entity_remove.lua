@@ -74,6 +74,8 @@ MCP:AddFunction({
             local e = Entity(idx)
             local ok, why = removable(e)
             if not ok then return { ok = false, error = "entity " .. tostring(idx) .. " " .. why } end
+            -- removable() proved validity, but that only narrows when the call is the condition
+            -- itself; going through `ok` to keep `why` for the error message loses it.
             ---@cast e Entity
             targets[1] = e
         elseif mode == "class" then
