@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Management;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
 namespace GModMcpServer.Host;
@@ -52,6 +54,43 @@ public sealed class GameProcessManager
         {
             p.Dispose();
         }
+    }
+
+    /// <summary>
+    /// The real command line of the running engine process, read via WMI — works even
+    /// when we didn't launch it (a Steam-started game), unlike <see cref="ProcessSnapshot.LastArgs"/>
+    /// which is only this host's in-memory record. Lets host_status report definitively
+    /// whether <c>-condebug</c> is on. Null off-Windows, when GMod isn't running, or on any
+    /// WMI failure (best-effort — never throws).
+    /// </summary>
+    public string? GetRunningCommandLine()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        try { return QueryEngineCommandLine(); }
+        catch { return null; }
+    }
+
+    /// <summary>Whether a command line has the <c>-condebug</c> flag (engine console mirrored to console.log).</summary>
+    public static bool HasCondebug(string? commandLine) =>
+        commandLine is not null && Regex.IsMatch(commandLine, @"(?:^|\s)-condebug(?:\s|$)", RegexOptions.IgnoreCase);
+
+    // The launcher spawns several gmod.exe (CEF/Steam helpers carrying --type=); the
+    // engine main is the one with -game. Prefer it; fall back to any non-helper.
+    [SupportedOSPlatform("windows")]
+    private static string? QueryEngineCommandLine()
+    {
+        using var searcher = new ManagementObjectSearcher(
+            "SELECT CommandLine FROM Win32_Process WHERE Name = 'gmod.exe'");
+        string? fallback = null;
+        foreach (var o in searcher.Get())
+        {
+            using var mo = o;
+            if (mo["CommandLine"] is not string cmd || cmd.Length == 0) continue;
+            if (cmd.Contains("--type=", StringComparison.OrdinalIgnoreCase)) continue; // CEF/helper
+            if (cmd.Contains("-game", StringComparison.OrdinalIgnoreCase)) return cmd;
+            fallback ??= cmd;
+        }
+        return fallback;
     }
 
     public Process Launch(IEnumerable<string> argList)

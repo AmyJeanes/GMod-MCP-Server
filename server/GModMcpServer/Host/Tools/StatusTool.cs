@@ -103,18 +103,40 @@ public sealed class StatusTool : IHostTool
         }
         bridgeNode["capabilities"] = capabilities;
 
-        // Engine-log capture: present when console.log exists (it persists across
-        // sessions since -condebug appends), recently_written when it grew in the
-        // last 30s — the practical "this session is actively logging" signal.
+        // Engine-log capture. `condebug` is the definitive signal: it reads the running
+        // process's real command line (via WMI), so it's right even for a Steam-started
+        // game we didn't launch. `present`/`recently_written` are only a proxy — console.log
+        // persists across sessions (-condebug appends), so a stale file can be "present"
+        // while this session has no -condebug. Surfaced prominently so the agent knows
+        // up-front whether engine output is being captured, rather than silently missing it.
+        var realCmdline = snap.Running ? _proc.GetRunningCommandLine() : null;
+        var condebug = snap.Running ? GameProcessManager.HasCondebug(realCmdline) : (bool?)null;
         var lastWrite = _engineLog.LastWriteUtc;
+        var recentlyWritten = lastWrite is { } t && (DateTime.UtcNow - t).TotalSeconds < 30;
+
+        string engineNote;
+        if (!snap.Running)
+            engineNote = "GMod isn't running.";
+        else if (condebug == true)
+            engineNote = "-condebug is on: engine output is captured to console.log — read it with engine_log; serious warnings also ride engine_events.";
+        else if (condebug == false)
+            engineNote = _engineLog.Present
+                ? "-condebug is NOT on the running process: engine output is NOT captured this session (any console.log is a stale prior-session file). console_read / engine_events silently miss engine-native messages. Relaunch via host_launch (adds -condebug) or add it to Steam launch options."
+                : "-condebug is NOT on and there's no console.log: engine output isn't captured. Relaunch via host_launch (adds -condebug) or add it to Steam launch options.";
+        else
+            engineNote = _engineLog.Present
+                ? "Couldn't read the launch args to confirm -condebug; console.log is present" + (recentlyWritten ? " and recently written, so capture is likely active." : ", but not recently written, so capture may be stale/off.")
+                : "Couldn't read the launch args and there's no console.log — engine output likely isn't captured.";
+
         var engineNode = new JsonObject
         {
+            ["condebug"] = condebug,
+            ["capturing"] = snap.Running ? (condebug ?? recentlyWritten) : (bool?)null,
             ["present"] = _engineLog.Present,
             ["path"] = _engineLog.Path,
-            ["recently_written"] = lastWrite is { } t && (DateTime.UtcNow - t).TotalSeconds < 30,
-            ["note"] = _engineLog.Present
-                ? "console.log present; engine-native output is captured — read it with engine_log, and serious warnings ride passively on engine_events."
-                : "No console.log — engine output isn't captured. host_launch adds -condebug automatically; for a Steam-started game, add -condebug to its launch options.",
+            ["recently_written"] = recentlyWritten,
+            ["command_line"] = realCmdline,
+            ["note"] = engineNote,
         };
 
         var result = new JsonObject
