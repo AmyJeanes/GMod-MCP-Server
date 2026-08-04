@@ -52,6 +52,15 @@ needed — and reading the file from disk.
    file still contained session 1's output and grew from 38 KB → 76 KB. So the
    file accumulates every session; the tailer must **anchor to a per-launch byte
    offset and never read from 0**, or it re-surfaces ancient history.
+7. **Repeated lines are written raw — no in-place rewrite.** The console's `(xN)`
+   collapse of consecutive identical lines is render-only; `console.log` gets every
+   occurrence verbatim (verified: 6 identical `MsgN`s → 6 lines, no counter). So the
+   file is **strictly append-only** — no tail is ever seeked-back and overwritten —
+   which keeps the forward-only cursor safe (it never reads mutated bytes, and the
+   length never shrinks from dedup, so the shrink-reset can't misfire). The flip
+   side: a per-frame warning spams the file, so the **passive rail collapses
+   consecutive identical lines with a count** (mirroring the console); `engine_log`
+   stays raw.
 
 Bonus finding: **console.log is noisy.** Benign texture/material/spawnmenu
 warnings dominate (`Requesting texture value from var "$basetexture" ...`,
@@ -64,6 +73,21 @@ it surfaced exactly 2 — the induced `unreasonable position` and the literal
 `Bad SetLocalOrigin(-nan(ind),...)` (the motivating case) — and none of the 1378
 noise lines. The case-sensitive `NaN` signature did not false-positive on the
 lowercase `-nan(ind)` in that same line.
+
+### Rejected: classifying by console colour (don't re-attempt)
+
+The GMod console colour-codes by severity (red errors, yellow warnings, white
+normal), which would be a perfect severity marker — but it is **not recoverable**.
+Verified 2026-08-04: `console.log` is pure plain text, **zero** ANSI/colour bytes
+and zero non-text bytes (the `Bad SetLocalOrigin` line is bare ASCII, no wrapper) —
+`-condebug` applies colour only at console render time, it isn't stored. Nor is it
+reachable another way: the `-console` window is engine-rendered VGUI (not a
+readable conhost), and GLua has no engine-console-output hook (`OnLuaError` is Lua
+errors only; engine C++ `Warning`/`Error` don't pass through the Lua `Msg` globals
+we detour). Capturing the colour/severity would require hooking the engine spew
+function from a **binary module** (banned — pure Lua only) and cross-process from
+the .NET host regardless. So passive classification is stuck with text heuristics,
+which is exactly why the passive rail must never drop silently (below).
 
 ## Locked design: keep the Lua rings, add engine as a complementary source
 
@@ -116,6 +140,45 @@ Three cleanly-separated views:
 - When it's not active, the agent tells the user to add `-condebug` to Steam launch
   options for the future and offers to relaunch with it. `host_status` surfaces the
   active/inactive state.
+
+## Passive rail refinements (design review 2026-08-04)
+
+Stress-testing the passive rail surfaced four refinements. They turn the allowlist
+into a *highlighter* (never the sole gate) and recreate what the console itself does.
+The committed v1 is the plain allowlist; these land in the live pass, where the
+heuristics can be tuned against real spew (they need real multi-line formats and
+real startup errors to validate, which is exactly the live-pass material):
+
+- **Never drop silently (breadcrumb).** The allowlist can't enumerate every engine
+  warning, so it must not decide whether a line is *ever* seen. Inline the allowlist
+  hits, and also append a non-silent count of other notable lines since the last poll
+  ("+N more, use engine_log"). Completeness comes from the breadcrumb + the
+  always-complete `engine_log`, not from the allowlist being exhaustive.
+
+- **Collapse repeats (finding 7).** The file is raw-append, so a per-frame warning
+  spams it; passive collapses consecutive identical messages with a count
+  (`... (x347)`), mirroring the console's own `(xN)`. `engine_log` stays raw.
+
+- **Multi-line messages via indentation.** The log loses true message boundaries — an
+  emit-time property the console keeps and the plain-text stream doesn't, so we
+  *cannot* separate messages as cleanly as GMod does. Indentation is the workable
+  proxy: Source multi-line messages indent their continuation lines (the `Crazy
+  origin` block = header + indented `Origin:`/`Angles:`/`Velocity:`; stack traces =
+  header + indented `  1. ...`). So "a message = a non-indented line plus the indented
+  lines under it." Passive groups a matched header with its indented detail (so `Crazy
+  origin` surfaces *with* its values) and dedups whole groups. `engine_log` stays raw.
+  It's a heuristic — anything it mis-groups is still faithfully in `engine_log`.
+
+- **Startup errors: the capture-marker partition.** The Lua error rail (`OnLuaError`)
+  exists only once the MCP addon has loaded and `mcp_enable` is on — measured ~96 boot
+  lines precede the first `[MCP]` marker this session — so a Lua error during early
+  startup (another addon's load-time error, anything pre-MCP) is invisible to the Lua
+  rail. But `console.log` has it from process boot. So MCP emits a distinct marker to
+  the console the moment its Lua capture goes active, and the engine rail partitions on
+  it: **before the marker**, surface `[ERROR]` lines too (startup Lua errors only
+  `console.log` has); **after it**, exclude `[ERROR]` (the Lua rail owns them, cleaner,
+  structured, per-realm). The marker is the seam that makes the two rails cover the
+  whole error timeline with no gap and no double-report.
 
 ## Implementation status
 
