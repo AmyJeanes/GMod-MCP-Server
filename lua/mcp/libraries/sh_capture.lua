@@ -142,9 +142,19 @@ function MCP:ApplyCaptureState()
     local active = enabled and level >= 1
 
     if active then
+        local onLuaError = hook.GetTable().OnLuaError
+        local already = onLuaError and onLuaError["MCP_PassiveCapture"] ~= nil
         hook.Add("OnLuaError", "MCP_PassiveCapture", function(err)
             MCP:RecordEvent("error", err)
         end)
+        -- On first activation, mark the console so the .NET engine-log rail can
+        -- partition: [ERROR] lines before this are startup errors only console.log
+        -- has (the rail didn't exist yet); after it, the Lua rail owns them. Reaches
+        -- console.log via -condebug; RecordEvent's own [MCP] filter keeps it out of
+        -- the ring, so it doesn't echo back to the model.
+        if not already then
+            MsgN("[MCP] lua-error capture active")
+        end
     else
         hook.Remove("OnLuaError", "MCP_PassiveCapture")
     end

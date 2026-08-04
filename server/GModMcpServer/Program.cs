@@ -208,8 +208,8 @@ internal static class Program
         // output Lua can't capture. Best-effort: a log-tail hiccup must never break dispatch.
         try
         {
-            var engineLines = services.GetService<EngineLog>()?.DrainPassive();
-            if (engineLines is { Count: > 0 }) AppendEngineEvents(result, engineLines);
+            var passive = services.GetService<EngineLog>()?.DrainPassive();
+            if (passive is { IsEmpty: false }) AppendEngineEvents(result, passive);
         }
         catch { /* engine-log capture is best-effort; the dispatch result stands */ }
 
@@ -377,23 +377,50 @@ internal static class Program
         blocks.Add(new TextContentBlock { Text = "events: " + arr.ToJsonString() });
     }
 
+    // Cap inlined engine highlights per response; the overflow rolls into the
+    // breadcrumb count so a burst can't flood a response.
+    private const int MaxInlineEngineEvents = 10;
+
     /// <summary>
-    /// Append passive engine-native warnings (from console.log, curated by
-    /// <see cref="EngineLogFilter"/>) to a tool result as a trailing text block. A
-    /// distinct <c>engine_events</c> channel rather than merged into the Lua
-    /// <c>events</c> array: engine output is process-wide and unattributed, where
-    /// <c>events</c> is per-realm Lua output, and merging would blur the two. Runs
-    /// after both host- and bridge-tool dispatch, so it rides every response.
+    /// Append the passive engine rail's output to a tool result as a distinct
+    /// <c>engine_events</c> text block — a JSON array of <c>{ kind, text, count }</c>
+    /// (kind <c>engine</c>, or <c>engine_startup_error</c> for pre-capture startup
+    /// errors) plus a <c>+N notable</c> breadcrumb for the lines not inlined. Kept
+    /// separate from the Lua <c>events</c> array: engine output is process-wide and
+    /// unattributed, where <c>events</c> is per-realm Lua output. Runs after both host-
+    /// and bridge-tool dispatch, so it rides every response.
     /// </summary>
-    internal static void AppendEngineEvents(CallToolResult result, IReadOnlyList<string> lines)
+    internal static void AppendEngineEvents(CallToolResult result, PassiveEngineResult passive)
     {
-        if (lines.Count == 0) return;
+        if (passive.IsEmpty) return;
+
+        var highlights = passive.Highlights;
+        var overflow = passive.OtherNotableCount;
+        if (highlights.Count > MaxInlineEngineEvents)
+        {
+            overflow += highlights.Count - MaxInlineEngineEvents;
+            highlights = highlights.Take(MaxInlineEngineEvents).ToList();
+        }
+
         var arr = new JsonArray();
-        foreach (var line in lines) arr.Add(new JsonObject { ["kind"] = "engine", ["text"] = line });
+        foreach (var h in highlights)
+        {
+            var o = new JsonObject
+            {
+                ["kind"] = h.StartupError ? "engine_startup_error" : "engine",
+                ["text"] = h.Text,
+            };
+            if (h.Count > 1) o["count"] = h.Count;
+            arr.Add(o);
+        }
+
+        var text = arr.Count > 0 ? "engine_events: " + arr.ToJsonString() : "engine_events:";
+        if (overflow > 0) text += $" +{overflow} notable (read with engine_log)";
+
         var blocks = result.Content is null
             ? new List<ContentBlock>()
             : new List<ContentBlock>(result.Content);
-        blocks.Add(new TextContentBlock { Text = "engine_events: " + arr.ToJsonString() });
+        blocks.Add(new TextContentBlock { Text = text });
         result.Content = blocks;
     }
 

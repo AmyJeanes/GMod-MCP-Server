@@ -143,11 +143,10 @@ Three cleanly-separated views:
 
 ## Passive rail refinements (design review 2026-08-04)
 
-Stress-testing the passive rail surfaced four refinements. They turn the allowlist
-into a *highlighter* (never the sole gate) and recreate what the console itself does.
-The committed v1 is the plain allowlist; these land in the live pass, where the
-heuristics can be tuned against real spew (they need real multi-line formats and
-real startup errors to validate, which is exactly the live-pass material):
+Stress-testing the passive rail surfaced four refinements, now **implemented** (the
+pattern lists still get tuned live against real spew — that part needs real multi-line
+formats and startup errors). They turn the allowlist into a *highlighter* (never the
+sole gate) and recreate what the console itself does:
 
 - **Never drop silently (breadcrumb).** The allowlist can't enumerate every engine
   warning, so it must not decide whether a line is *ever* seen. Inline the allowlist
@@ -176,38 +175,67 @@ real startup errors to validate, which is exactly the live-pass material):
   rail. But `console.log` has it from process boot. So MCP emits a distinct marker to
   the console the moment its Lua capture goes active, and the engine rail partitions on
   it: **before the marker**, surface `[ERROR]` lines too (startup Lua errors only
-  `console.log` has); **after it**, exclude `[ERROR]` (the Lua rail owns them, cleaner,
-  structured, per-realm). The marker is the seam that makes the two rails cover the
-  whole error timeline with no gap and no double-report.
+  `console.log` has, tagged `kind: engine_startup_error`); **after it**, exclude
+  `[ERROR]` (the Lua rail owns them, cleaner, structured, per-realm). The marker string
+  is `[MCP] lua-error capture active` (`EngineLogFilter.CaptureMarker`). The seam makes
+  the two rails cover the whole error timeline with no gap and no double-report.
+
+### Delivery contract
+
+- **Timing is forced by the medium.** MCP has no server→model push, so engine output can
+  only ride a tool response. The agent learns of a warning on its **next tool call**
+  (deduped, only what's new since the last delivery); startup errors land on the
+  **first** call; a warning during an idle gap waits for the next call or an explicit
+  `engine_log`. There is no "when" knob.
+- **Shape** (chosen 2026-08-04): a separate `engine_events:` text block — its own
+  channel, *not* merged into the Lua `events` array (engine output is process-wide and
+  unattributed; `events` is per-realm Lua). A JSON array of `{ kind, text, count? }` —
+  `kind` is `engine` or `engine_startup_error`, `count` only when a message repeated —
+  plus a `+N notable (read with engine_log)` breadcrumb.
+- **Cap.** At most `MaxInlineEngineEvents` (10) inlined per response; the overflow rolls
+  into the breadcrumb count so a burst can't flood a response.
 
 ## Implementation status
 
-Implemented (built + unit-tested in Release; 61/61 pass):
+Implemented (built + unit-tested in Release; 71/71 pass):
 
 - [x] `LaunchTool.cs`: appends `-condebug`; anchors the session offset pre-launch.
 - [x] `EngineLogReader` (pure, unit-tested): offset-anchored tail, shrink-reset,
       partial-line hold-back, bounded chunk/tail windows, Latin1 (byte==char).
-- [x] `EngineLogFilter`: conservative serious-signature allowlist, `[ERROR]`/`[MCP]`
-      exclusion (Lua errors stay on the cleaner Lua rail).
-- [x] `EngineLog` (singleton service): path resolve, `AnchorAtLaunch`, `DrainPassive`
-      (curated), `Read` (raw tail / incremental).
+- [x] `EngineLogGrouping`: indent-based multi-line message grouping.
+- [x] `EngineLogFilter`: `Classify` into Marker / McpNoise / LuaError / Warning /
+      Notable / Benign — high-confidence allowlist, broad notable heuristic, benign
+      denylist, `CaptureMarker`.
+- [x] `EngineLog` (singleton service): path resolve, `AnchorAtLaunch` (resets the
+      capture-marker state), `DrainPassive` (group → classify → startup-partition →
+      dedup → `PassiveEngineResult`), `Read` (raw tail / incremental).
 - [x] `EngineLogTool` (`IHostTool`, ungated): explicit raw-tail read, `since`/`cursor`,
       `limit`, `filter`, `enabled`/`path`; registered in `HostToolCatalog.ToolTypes`.
-- [x] Passive `engine_events` injection at the `CallToolAsync` choke point (best-effort,
+- [x] Passive `engine_events` injection at the `CallToolAsync` choke point (JSON block,
+      startup/repeat kinds + counts, `+N notable` breadcrumb, inline cap; best-effort,
       never breaks dispatch; rides host- and bridge-tool responses alike).
+- [x] `sh_capture.lua`: emits the `[MCP] lua-error capture active` partition marker.
 - [x] `host_status`: `engine_log` block (present / recently_written / hint).
 - [x] `sh_console_read.lua` + `ServerInstructionsText`: Lua-only caveat pointing at
       `engine_log` / `engine_events`.
-- [x] README tool tables regenerated (6 host tools); `EngineLogTests` added.
+- [x] README tool tables (6 host tools); `EngineLogTests` (grouping, classify, passive
+      partition/dedup/breadcrumb, JSON format).
 
 ## Deferred to a live pass (needs the rebuilt host binary running)
 
 The live MCP server is the old Debug binary and can't be hot-swapped this session, so
-these await a rebuild + relaunch: calling `engine_log` live, seeing real
-`engine_events` ride a response (induce e.g. a `Bad SetLocalOrigin`), `host_status`'s
-`engine_log` report, and tuning the `EngineLogFilter` allowlist against real spew. The
-end-to-end `-condebug` → `console.log` mechanism itself is already verified live (the
-six findings above); only the new tool code is unexercised.
+these await a rebuild + relaunch — all *verification and tuning*, no unbuilt logic:
+
+- Call `engine_log` live; see real `engine_events` ride a response (induce a
+  `Bad SetLocalOrigin` / a multi-line `Crazy origin` block); confirm `host_status`'s
+  `engine_log` report.
+- Confirm the capture-marker partition end-to-end (a real startup error surfaces once,
+  as `engine_startup_error`; post-marker `[ERROR]`s don't double-report).
+- Tune the three `EngineLogFilter` lists (Signatures / NotableHints / BenignHints) and
+  the indent grouper against real multi-line spew.
+
+The end-to-end `-condebug` → `console.log` mechanism itself is already verified live
+(the seven findings above); only the new tool/pipeline code is unexercised.
 
 ## Known trade-off
 

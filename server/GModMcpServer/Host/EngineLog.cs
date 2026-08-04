@@ -18,6 +18,7 @@ public sealed class EngineLog
     private readonly string _path;
     private readonly object _gate = new();
     private long _passiveCursor = -1; // -1 = not yet anchored (start-at-now on first drain)
+    private bool _luaCaptureActive;   // flipped true by the capture marker in the stream
 
     public EngineLog(BridgePaths paths)
     {
@@ -39,7 +40,11 @@ public sealed class EngineLog
     /// </summary>
     public void AnchorAtLaunch()
     {
-        lock (_gate) { _passiveCursor = _reader.Length; }
+        lock (_gate)
+        {
+            _passiveCursor = _reader.Length;
+            _luaCaptureActive = false; // a fresh session's Lua capture isn't active until its marker
+        }
     }
 
     /// <summary>
@@ -48,24 +53,66 @@ public sealed class EngineLog
     /// or the host restarted mid-game), the first call starts at now so it doesn't
     /// replay accumulated history.
     /// </summary>
-    public IReadOnlyList<string> DrainPassive()
+    public PassiveEngineResult DrainPassive()
     {
         lock (_gate)
         {
             if (_passiveCursor < 0)
             {
-                _passiveCursor = _reader.Length;
-                return Array.Empty<string>();
+                _passiveCursor = _reader.Length; // start-at-now (no launch anchor): don't replay history
+                return PassiveEngineResult.Empty;
             }
             var lines = _reader.ReadFrom(ref _passiveCursor);
-            if (lines.Count == 0) return Array.Empty<string>();
-            var kept = new List<string>();
-            foreach (var l in lines)
+            if (lines.Count == 0) return PassiveEngineResult.Empty;
+
+            var messages = EngineLogGrouping.Group(lines);
+            var surfaced = new List<(string Text, bool Startup)>();
+            var notable = 0;
+
+            foreach (var m in messages)
             {
-                if (EngineLogFilter.IsInteresting(l)) kept.Add(l);
+                switch (EngineLogFilter.Classify(m.Header))
+                {
+                    case EngineLineClass.Marker:
+                        _luaCaptureActive = true;
+                        break;
+                    case EngineLineClass.LuaError:
+                        // Before capture is active these are startup errors only
+                        // console.log has; after, the Lua rail owns them (cleaner), so
+                        // don't double-report.
+                        if (!_luaCaptureActive) surfaced.Add((m.Text, true));
+                        break;
+                    case EngineLineClass.Warning:
+                        surfaced.Add((m.Text, false));
+                        break;
+                    case EngineLineClass.Notable:
+                        notable++;
+                        break;
+                    // McpNoise / Benign: ignored.
+                }
             }
-            return kept;
+
+            return new PassiveEngineResult(Collapse(surfaced), notable);
         }
+    }
+
+    // Collapse consecutive identical surfaced messages into one with a count — the
+    // console's (xN) behaviour, which -condebug writes out raw (see docs/engine-log.md).
+    private static List<EngineHighlight> Collapse(List<(string Text, bool Startup)> items)
+    {
+        var outl = new List<EngineHighlight>();
+        foreach (var it in items)
+        {
+            if (outl.Count > 0 && outl[^1].Text == it.Text && outl[^1].StartupError == it.Startup)
+            {
+                outl[^1] = outl[^1] with { Count = outl[^1].Count + 1 };
+            }
+            else
+            {
+                outl.Add(new EngineHighlight(it.Text, 1, it.Startup));
+            }
+        }
+        return outl;
     }
 
     /// <summary>
@@ -119,3 +166,16 @@ public sealed class EngineLog
 
 public sealed record EngineLogReadResult(
     IReadOnlyList<string> Lines, long Cursor, bool Dropped, bool Present, string Path);
+
+/// <summary>One inlined passive message: text (grouped), its repeat count, and whether
+/// it's a pre-capture startup Lua error (which only console.log has).</summary>
+public sealed record EngineHighlight(string Text, int Count, bool StartupError);
+
+/// <summary>The passive engine rail's output for one drain: inlined highlights plus a
+/// count of other "notable" lines not inlined (the breadcrumb).</summary>
+public sealed record PassiveEngineResult(IReadOnlyList<EngineHighlight> Highlights, int OtherNotableCount)
+{
+    public static readonly PassiveEngineResult Empty = new(Array.Empty<EngineHighlight>(), 0);
+
+    public bool IsEmpty => Highlights.Count == 0 && OtherNotableCount == 0;
+}
