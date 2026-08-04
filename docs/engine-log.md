@@ -120,7 +120,10 @@ Three cleanly-separated views:
 - **Externally-launched (Steam `-condebug`) or host restarted mid-game:** no
   launch anchor → start at current EOF on first access ("start at now", like the
   Lua session cursor). Loses this session's earlier lines but never dumps old
-  sessions. Documented, honest.
+  sessions. Documented, honest. Because the capture marker is then behind the
+  start-at-now cursor, this path also assumes Lua capture is already active, so a
+  later `[ERROR]` is treated as Lua-rail-covered rather than mis-tagged as a startup
+  error (relevant the moment the rebuilt host attaches to the running game).
 - **Robustness:** if the file length ever drops below the cursor (deleted, or a
   future GMod build truncates), reset the cursor to 0. Hold back a trailing
   partial line (advance the cursor only to the last newline) so a line caught

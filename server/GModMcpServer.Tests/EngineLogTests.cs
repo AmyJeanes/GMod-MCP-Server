@@ -243,6 +243,24 @@ public class EngineLogPassiveTests
         }
         finally { Directory.Delete(tmp, true); }
     }
+
+    [Test]
+    public void DrainPassive_WithoutAnchor_TreatsLaterErrorsAsLuaRailCovered_NotStartup()
+    {
+        var (log, logPath, tmp) = NewLog();
+        try
+        {
+            // Attaching to an already-running game (no anchor): the capture marker is
+            // behind the start-at-now cursor, so a later [ERROR] must NOT be mistaken for
+            // a startup error the Lua rail didn't see — it did.
+            log.DrainPassive();
+            File.AppendAllText(logPath, "[ERROR] addon/x.lua:1: boom\n");
+
+            Assert.That(log.DrainPassive().Highlights, Is.Empty,
+                "a post-attach [ERROR] is owned by the Lua rail, not surfaced as a startup error");
+        }
+        finally { Directory.Delete(tmp, true); }
+    }
 }
 
 public class AppendEngineEventsTests

@@ -59,7 +59,12 @@ public sealed class EngineLog
         {
             if (_passiveCursor < 0)
             {
-                _passiveCursor = _reader.Length; // start-at-now (no launch anchor): don't replay history
+                // Start-at-now (no launch anchor): attaching to an already-running game,
+                // so don't replay history — and assume Lua capture is already active
+                // (its marker is behind us), so post-attach [ERROR]s are Lua-rail-covered
+                // rather than mis-tagged as startup errors.
+                _passiveCursor = _reader.Length;
+                _luaCaptureActive = true;
                 return PassiveEngineResult.Empty;
             }
             var lines = _reader.ReadFrom(ref _passiveCursor);
