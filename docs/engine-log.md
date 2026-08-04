@@ -190,13 +190,44 @@ sole gate) and recreate what the console itself does:
   (deduped, only what's new since the last delivery); startup errors land on the
   **first** call; a warning during an idle gap waits for the next call or an explicit
   `engine_log`. There is no "when" knob.
-- **Shape** (chosen 2026-08-04): a separate `engine_events:` text block — its own
-  channel, *not* merged into the Lua `events` array (engine output is process-wide and
-  unattributed; `events` is per-realm Lua). A JSON array of `{ kind, text, count? }` —
-  `kind` is `engine` or `engine_startup_error`, `count` only when a message repeated —
-  plus a `+N notable (read with engine_log)` breadcrumb.
+- **Shape (as built):** a separate `engine_events:` text block — its own channel, *not*
+  merged into the Lua `events` array. A JSON array of `{ kind, text, count? }` — `kind` is
+  `engine` or `engine_startup_error`, `count` only when a message repeated — plus a
+  `+N notable (read with engine_log)` breadcrumb.
 - **Cap.** At most `MaxInlineEngineEvents` (10) inlined per response; the overflow rolls
   into the breadcrumb count so a burst can't flood a response.
+
+### Unified events stream — agreed target, deferred to the live pass
+
+The separate block above is what's **built and tested**. But the shape decision was then
+revisited: the Lua console detour records the *exact* text it sends to the console
+(`print` → the same tab-joined string, `Msg` → the same concatenation), so a `console.log`
+line and its enriched Lua-rail event match on **exact text** (Lua errors are a clean
+substring: rail has `foo:3: msg`, file has `[ERROR] foo:3: msg` + stack). That makes
+correlation reliable, so the agreed end state is a **single unified `events` stream**:
+
+- **`console.log` is the single spine** (one source, one cursor → inherently ordered and
+  deduped), and the **Lua rail becomes an enrichment side-input**: .NET consumes the Lua
+  events (no longer emits them separately), buffers them, and enriches each `console.log`
+  line that matches with realm + clean kind. Unmatched lines are engine-native (classified
+  as today). One `events` array, in file order.
+- **Timing caveat (honest):** `console.log` is drained on every response (process-wide), but
+  a realm's Lua events only ride *that realm's* responses. So a client-realm Lua line drained
+  on a server-realm call, before its event arrives, is shown raw (un-enriched) — never duped
+  or missed (the single spine guarantees once-each), just occasionally missing its realm tag.
+  Stopping a late-arriving event from re-showing its already-emitted line needs a small
+  bidirectional dedup buffer (recent Lua-event texts ↔ recently-emitted line texts).
+- **Open sub-decision (unanswered — the user left before choosing):** does the full Lua
+  `print`/`msg` firehose fold into the unified stream, or does the stream stay focused on
+  notable things (Lua errors enriched + engine warnings/startup) with the firehose staying in
+  `console_read`? Recommendation: **notable-only** — folding the firehose in is noisy and its
+  benign lines would flicker in/out with the cross-realm timing lag.
+
+**Why deferred (not built blind):** unlike everything else here, this *restructures the
+existing event-assembly path* (making .NET the single emitter), so a blind bug could regress
+the **working** Lua `events` rail — and the timing/dedup behaviour genuinely needs the live
+game to validate. It's the first item to build *with* the user in the live pass; the tested
+separate-rails version stands as the baseline until then.
 
 ## Implementation status
 
@@ -218,27 +249,36 @@ Implemented (built + unit-tested in Release; 71/71 pass):
       startup/repeat kinds + counts, `+N notable` breadcrumb, inline cap; best-effort,
       never breaks dispatch; rides host- and bridge-tool responses alike).
 - [x] `sh_capture.lua`: emits the `[MCP] lua-error capture active` partition marker.
-- [x] `host_status`: `engine_log` block (present / recently_written / hint).
+- [x] `host_status`: `engine_log` block with a **definitive `condebug`** read from the
+      running process's real command line (WMI, `System.Management`) — works for a
+      Steam-started game we didn't launch; plus `capturing` / `command_line` / `present`
+      / `recently_written` and an on/off/stale note. (`HasCondebug` unit-tested; the WMI
+      call itself is best-effort try/catch, proven live via PowerShell.)
 - [x] `sh_console_read.lua` + `ServerInstructionsText`: Lua-only caveat pointing at
       `engine_log` / `engine_events`.
 - [x] README tool tables (6 host tools); `EngineLogTests` (grouping, classify, passive
-      partition/dedup/breadcrumb, JSON format).
+      partition/dedup/breadcrumb, JSON format) + `CondebugDetectionTests`. 80/80.
 
 ## Deferred to a live pass (needs the rebuilt host binary running)
 
 The live MCP server is the old Debug binary and can't be hot-swapped this session, so
-these await a rebuild + relaunch — all *verification and tuning*, no unbuilt logic:
+these await a rebuild + relaunch. All but the first are *verification and tuning*:
 
+- **Build the unified events stream** (the "Unified events stream" section above) — the one
+  piece of *unbuilt logic*, deliberately deferred because it restructures the working
+  event-assembly path and its timing/dedup needs the live game to validate. Resolve the
+  firehose sub-decision with the user first.
 - Call `engine_log` live; see real `engine_events` ride a response (induce a
   `Bad SetLocalOrigin` / a multi-line `Crazy origin` block); confirm `host_status`'s
-  `engine_log` report.
+  `engine_log` report (esp. `condebug` for an attached vs host-launched game).
 - Confirm the capture-marker partition end-to-end (a real startup error surfaces once,
   as `engine_startup_error`; post-marker `[ERROR]`s don't double-report).
 - Tune the three `EngineLogFilter` lists (Signatures / NotableHints / BenignHints) and
   the indent grouper against real multi-line spew.
 
-The end-to-end `-condebug` → `console.log` mechanism itself is already verified live
-(the seven findings above); only the new tool/pipeline code is unexercised.
+The end-to-end `-condebug` → `console.log` mechanism is already verified live (the seven
+findings above), plus the Lua marker seam (emits to `console.log` as expected) and the WMI
+command-line read (via PowerShell). Only the new .NET tool/pipeline code is unexercised.
 
 ## Known trade-off
 
