@@ -217,11 +217,15 @@ correlation reliable, so the agreed end state is a **single unified `events` str
   or missed (the single spine guarantees once-each), just occasionally missing its realm tag.
   Stopping a late-arriving event from re-showing its already-emitted line needs a small
   bidirectional dedup buffer (recent Lua-event texts ↔ recently-emitted line texts).
-- **Open sub-decision (unanswered — the user left before choosing):** does the full Lua
-  `print`/`msg` firehose fold into the unified stream, or does the stream stay focused on
-  notable things (Lua errors enriched + engine warnings/startup) with the firehose staying in
-  `console_read`? Recommendation: **notable-only** — folding the firehose in is noisy and its
-  benign lines would flicker in/out with the cross-realm timing lag.
+- **Firehose sub-decision (resolved 2026-08-04): fold in EVERYTHING.** The unified stream
+  carries the full Lua `print`/`msg` firehose (enriched) alongside errors + engine
+  warnings/startup — not just notable items. So a `console.log` line matching a Lua event is
+  included and enriched; an unmatched line is engine-native and still classified (notable
+  inline, benign → breadcrumb). Implication to handle in the build: a benign Lua print drained
+  *before* its Lua event arrives (cross-realm lag) would momentarily look engine-benign and be
+  dropped, then reappear once its event correlates — so the enrichment/correlation buffer must
+  hold Lua events over a short window so benign Lua lines don't flicker. This is exactly the
+  behaviour that needs the live game to tune, which is why the build is deferred there.
 
 **Why deferred (not built blind):** unlike everything else here, this *restructures the
 existing event-assembly path* (making .NET the single emitter), so a blind bug could regress
@@ -266,8 +270,8 @@ these await a rebuild + relaunch. All but the first are *verification and tuning
 
 - **Build the unified events stream** (the "Unified events stream" section above) — the one
   piece of *unbuilt logic*, deliberately deferred because it restructures the working
-  event-assembly path and its timing/dedup needs the live game to validate. Resolve the
-  firehose sub-decision with the user first.
+  event-assembly path and its timing/dedup needs the live game to validate. Design is fully
+  locked: full-firehose folded in, console.log as the spine, Lua rail as enrichment.
 - Call `engine_log` live; see real `engine_events` ride a response (induce a
   `Bad SetLocalOrigin` / a multi-line `Crazy origin` block); confirm `host_status`'s
   `engine_log` report (esp. `condebug` for an attached vs host-launched game).
