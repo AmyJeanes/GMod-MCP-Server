@@ -19,17 +19,16 @@ internal static class Program
     // `events` array that rides on tool results — MCP can't push these to the
     // model, so they piggyback on responses. See sh_capture.lua / docs/protocol.md.
     private const string ServerInstructionsText =
-        "Some tool results from this Garry's Mod bridge include an \"events\" array: " +
-        "console output and Lua errors that happened passively in the game (outside the " +
-        "tool call) since this session's previous call — e.g. background hooks, timers, " +
-        "autorefresh, or other addons. Treat \"events\" as game-side diagnostic context, " +
-        "not part of the tool's primary result. The console_read_sv and console_read_cl " +
-        "tools poll the same buffer on demand. That buffer is Lua-only — it cannot see " +
-        "engine-native C++ console output (physics/transform warnings like \"Bad " +
-        "SetLocalOrigin\", asset/mount spew, engine errors). Those come from a separate " +
-        "rail: serious ones ride back as an \"engine_events\" array on tool results, and " +
-        "the engine_log tool reads the full console.log tail — both require GMod launched " +
-        "with -condebug (host_launch adds it).";
+        "Some tool results from this Garry's Mod bridge include an \"events\" array: a " +
+        "unified, in-order stream of everything the game console emitted since this session's " +
+        "previous call — engine-native C++ output AND both realms' Lua output, interleaved in " +
+        "true order (background hooks, timers, autorefresh, engine warnings like \"Bad " +
+        "SetLocalOrigin\", other addons). Each entry has a `kind` (print/msg/error, or engine " +
+        "for engine-native), an optional `realm`, and a `count` for repeats. Treat \"events\" " +
+        "as game-side diagnostic context, not part of the tool's primary result. It's sourced " +
+        "from console.log, so it needs GMod launched with -condebug (host_launch adds it; " +
+        "host_status.condebug confirms). The engine_log tool reads the full raw console.log " +
+        "tail on demand; console_read_sv/cl poll the per-realm Lua ring.";
 
     public static async Task<int> Main(string[] args)
     {
@@ -201,25 +200,26 @@ internal static class Program
         var services = ctx.Services ?? throw new InvalidOperationException("RequestContext.Services is null");
         services.GetRequiredService<McpServerAccessor>().TrySet(ctx.Server);
 
-        var result = await DispatchToolAsync(ctx, services, ct).ConfigureAwait(false);
+        var (result, luaEvents, realm) = await DispatchToolAsync(ctx, services, ct).ConfigureAwait(false);
 
-        // Passive engine-native warnings (console.log) ride back on every response as
-        // `engine_events` — the .NET-side parallel of the Lua `events` rail, for the C++
-        // output Lua can't capture. Best-effort: a log-tail hiccup must never break dispatch.
+        // Unified events stream: console.log (the true interleaved order of engine + both
+        // realms' Lua output) is the spine; the passive Lua events feed enrichment/dedup.
+        // Best-effort: a log hiccup must never break dispatch.
         try
         {
-            var passive = services.GetService<EngineLog>()?.DrainPassive();
-            if (passive is { IsEmpty: false }) AppendEngineEvents(result, passive);
+            var unified = services.GetService<EngineLog>()?.Unify(luaEvents, realm);
+            if (unified is { Count: > 0 }) EmitUnifiedEvents(result, unified);
         }
         catch { /* engine-log capture is best-effort; the dispatch result stands */ }
 
         return result;
     }
 
-    private static async ValueTask<CallToolResult> DispatchToolAsync(
-        RequestContext<CallToolRequestParams> ctx, IServiceProvider services, CancellationToken ct)
+    private static async ValueTask<(CallToolResult Result, IReadOnlyList<LuaEvent> LuaEvents, string? Realm)>
+        DispatchToolAsync(RequestContext<CallToolRequestParams> ctx, IServiceProvider services, CancellationToken ct)
     {
         var name = ctx.Params?.Name ?? throw new ArgumentException("Tool name is required.");
+        var noLua = (IReadOnlyList<LuaEvent>)Array.Empty<LuaEvent>();
 
         // Host tools take precedence — they don't go through the file bridge.
         var hostTool = services.GetServices<IHostTool>().FirstOrDefault(t => t.Name == name);
@@ -227,11 +227,11 @@ internal static class Program
         {
             try
             {
-                return await hostTool.InvokeAsync(ctx.Params?.Arguments, ct).ConfigureAwait(false);
+                return (await hostTool.InvokeAsync(ctx.Params?.Arguments, ct).ConfigureAwait(false), noLua, null);
             }
             catch (Exception ex)
             {
-                return ErrorResult($"host tool error: {ex.Message}");
+                return (ErrorResult($"host tool error: {ex.Message}"), noLua, null);
             }
         }
 
@@ -241,7 +241,7 @@ internal static class Program
 
         if (!watcher.Current.Tools.TryGetValue(name, out var descriptor))
         {
-            return ErrorResult($"unknown tool: {name}");
+            return (ErrorResult($"unknown tool: {name}"), noLua, null);
         }
 
         var bridge = bridges.Get(descriptor.Realm);
@@ -262,6 +262,11 @@ internal static class Program
             var resp = await bridge.SendAsync(descriptor.FunctionId, argsElement, ResolveCallTimeout(descriptor.Entry.Timeout), ct)
                 .ConfigureAwait(false);
 
+            // Pull the passive Lua events (attached under _mcp_passive) out for the unified
+            // stream, and strip them so the result dump doesn't duplicate them. A tool's own
+            // `events` field (console_read) is separate and left intact.
+            var luaEvents = ExtractAndStripPassive(resp.Result);
+
             var resultJson = resp.Result?.ToJsonString() ?? "null";
             var ok = resp.Result is JsonObject obj
                 && obj.TryGetPropertyValue("ok", out var okNode)
@@ -269,19 +274,20 @@ internal static class Program
                 && okVal.TryGetValue<bool>(out var okBool)
                 && okBool;
 
-            return new CallToolResult
+            var result = new CallToolResult
             {
                 Content = BuildContent(resp.Result, resultJson, paths.DataPath),
                 IsError = !ok,
             };
+            return (result, luaEvents, descriptor.Realm);
         }
         catch (TaskCanceledException)
         {
-            return ErrorResult("timed out waiting for GMod response (is mcp_enable 1?)");
+            return (ErrorResult("timed out waiting for GMod response (is mcp_enable 1?)"), noLua, null);
         }
         catch (Exception ex)
         {
-            return ErrorResult($"bridge error: {ex.Message}");
+            return (ErrorResult($"bridge error: {ex.Message}"), noLua, null);
         }
     }
 
@@ -352,7 +358,6 @@ internal static class Program
             if (blocks.Count > 0)
             {
                 AppendAbsolutePath(blocks, result, dataPath);
-                AppendPassiveEvents(blocks, result);
                 return blocks;
             }
         }
@@ -361,66 +366,53 @@ internal static class Program
     }
 
     /// <summary>
-    /// Passive events — console output, Lua errors, and background-job completions
-    /// (sh_jobs.lua) — ride back on a response's <c>events</c> array, attached by
-    /// sh_filebridge.lua. The text-fallback path surfaces them inside the whole-result
-    /// JSON dump, but the content-array path (image/audio tools) returns before that,
-    /// so without this they'd be dropped — and their per-session cursor has already
-    /// advanced, losing them for good. Re-surface them as a trailing text block so a
-    /// passive job completion survives even when the next tool call returns media.
+    /// Pull the passive Lua events (attached by sh_filebridge.lua under <c>_mcp_passive</c>)
+    /// out of a bridge response and strip them, so they feed the unified stream once rather
+    /// than also showing raw in the result dump. A tool's own <c>events</c> field
+    /// (console_read) is a different key and is left intact.
     /// </summary>
-    private static void AppendPassiveEvents(List<ContentBlock> blocks, JsonNode? result)
+    private static IReadOnlyList<LuaEvent> ExtractAndStripPassive(JsonNode? result)
     {
-        if (result is not JsonObject obj) return;
-        if (!obj.TryGetPropertyValue("events", out var node)) return;
-        if (node is not JsonArray arr || arr.Count == 0) return;
-        blocks.Add(new TextContentBlock { Text = "events: " + arr.ToJsonString() });
+        if (result is not JsonObject obj) return Array.Empty<LuaEvent>();
+        if (!obj.TryGetPropertyValue("_mcp_passive", out var node) || node is not JsonArray arr)
+            return Array.Empty<LuaEvent>();
+
+        var list = new List<LuaEvent>();
+        foreach (var item in arr)
+        {
+            if (item is not JsonObject e) continue;
+            var text = e["text"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(text)) continue;
+            var kind = e["kind"]?.GetValue<string>() ?? "msg";
+            list.Add(new LuaEvent(kind, text));
+        }
+        obj.Remove("_mcp_passive");
+        return list;
     }
 
-    // Cap inlined engine highlights per response; the overflow rolls into the
-    // breadcrumb count so a burst can't flood a response.
-    private const int MaxInlineEngineEvents = 10;
-
     /// <summary>
-    /// Append the passive engine rail's output to a tool result as a distinct
-    /// <c>engine_events</c> text block — a JSON array of <c>{ kind, text, count }</c>
-    /// (kind <c>engine</c>, or <c>engine_startup_error</c> for pre-capture startup
-    /// errors) plus a <c>+N notable</c> breadcrumb for the lines not inlined. Kept
-    /// separate from the Lua <c>events</c> array: engine output is process-wide and
-    /// unattributed, where <c>events</c> is per-realm Lua output. Runs after both host-
-    /// and bridge-tool dispatch, so it rides every response.
+    /// Append the unified events stream as a trailing <c>events:</c> text block — a JSON
+    /// array of <c>{ kind, text, realm?, count? }</c> in console.log order (Lua-originated
+    /// lines enriched from the rail, engine-native lines raw, deduped, consecutive repeats
+    /// collapsed). Runs after both host- and bridge-tool dispatch, so it rides every response.
     /// </summary>
-    internal static void AppendEngineEvents(CallToolResult result, PassiveEngineResult passive)
+    internal static void EmitUnifiedEvents(CallToolResult result, IReadOnlyList<UnifiedEvent> events)
     {
-        if (passive.IsEmpty) return;
-
-        var highlights = passive.Highlights;
-        var overflow = passive.OtherNotableCount;
-        if (highlights.Count > MaxInlineEngineEvents)
-        {
-            overflow += highlights.Count - MaxInlineEngineEvents;
-            highlights = highlights.Take(MaxInlineEngineEvents).ToList();
-        }
+        if (events.Count == 0) return;
 
         var arr = new JsonArray();
-        foreach (var h in highlights)
+        foreach (var e in events)
         {
-            var o = new JsonObject
-            {
-                ["kind"] = h.StartupError ? "engine_startup_error" : "engine",
-                ["text"] = h.Text,
-            };
-            if (h.Count > 1) o["count"] = h.Count;
+            var o = new JsonObject { ["kind"] = e.Kind, ["text"] = e.Text };
+            if (e.Realm is not null) o["realm"] = e.Realm;
+            if (e.Count > 1) o["count"] = e.Count;
             arr.Add(o);
         }
-
-        var text = arr.Count > 0 ? "engine_events: " + arr.ToJsonString() : "engine_events:";
-        if (overflow > 0) text += $" +{overflow} notable (read with engine_log)";
 
         var blocks = result.Content is null
             ? new List<ContentBlock>()
             : new List<ContentBlock>(result.Content);
-        blocks.Add(new TextContentBlock { Text = text });
+        blocks.Add(new TextContentBlock { Text = "events: " + arr.ToJsonString() });
         result.Content = blocks;
     }
 

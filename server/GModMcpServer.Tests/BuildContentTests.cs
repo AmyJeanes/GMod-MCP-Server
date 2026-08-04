@@ -5,13 +5,11 @@ namespace GModMcpServer.Tests;
 
 public class BuildContentTests
 {
-    // A media tool returns a `content` array, so BuildContent takes the content
-    // branch and never emits the whole-result JSON fallback. Passive events
-    // (console output, Lua errors, background-job completions) ride on the same
-    // response's `events` array; without re-surfacing them here they'd be dropped
-    // on media-returning tools, and their per-session cursor has already advanced.
+    // A media tool returns a `content` array -> BuildContent maps it to native blocks.
+    // (Passive events no longer ride here: they're stripped upstream and re-emitted as the
+    // unified `events` block by EmitUnifiedEvents.)
     [Test]
-    public void BuildContent_ContentArray_SurfacesPassiveEvents()
+    public void BuildContent_ContentArray_ReturnsMediaBlocks()
     {
         var result = new JsonObject
         {
@@ -20,28 +18,14 @@ public class BuildContentTests
             {
                 new JsonObject { ["type"] = "image", ["data"] = "AAAA", ["mimeType"] = "image/jpeg" },
             },
-            ["events"] = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["seq"] = 4,
-                    ["kind"] = "job",
-                    ["job_id"] = "mcp_job_2",
-                    ["text"] = "job mcp_job_2 (screenshot) finished ok: mcp/screenshots/x.jpg.",
-                },
-            },
         };
 
         var blocks = Program.BuildContent(result, result.ToJsonString(), "C:\\data");
 
-        Assert.That(blocks.Any(b => b is ImageContentBlock), Is.True, "the image block should survive");
-        var text = string.Join("\n", blocks.OfType<TextContentBlock>().Select(t => t.Text));
-        Assert.That(text, Does.Contain("mcp_job_2"),
-            "a passive job completion on a media-returning response must be surfaced, not dropped");
+        Assert.That(blocks.Any(b => b is ImageContentBlock), Is.True, "the image block is mapped");
     }
 
-    // The common text-tool path is unchanged: no `content` array => the whole
-    // result JSON (which already carries `events`) is the single text block.
+    // The common text-tool path: no `content` array => the whole result JSON is the block.
     [Test]
     public void BuildContent_NoContentArray_DumpsFallbackJson()
     {

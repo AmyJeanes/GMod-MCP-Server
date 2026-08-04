@@ -29,16 +29,18 @@ local function writeResponse(reqId, response)
 end
 
 -- Piggyback passive console/error events (sh_capture.lua) onto a dispatch
--- response so the model sees output that fired outside a tool call. The per-
--- session cursor (the request id is `<session>__<uuid>`) keeps each connected
--- MCP host's stream non-duplicative. Realm-local: this is the responding
--- realm's own ring.
+-- response under the internal `_mcp_passive` key. The .NET host consumes these to
+-- enrich + dedup its unified console.log-driven events stream, then strips the key
+-- (so it never shows raw); a tool's own `events` field (console_read) is separate
+-- and untouched. The per-session cursor (the request id is `<session>__<uuid>`)
+-- keeps each connected MCP host's stream non-duplicative. Realm-local: this is the
+-- responding realm's own ring.
 ---@param reqId string
 ---@param response table
 local function attachEvents(reqId, response)
     if type(response) ~= "table" then return end
     if not MCP.DrainEventsSince then return end
-    -- Don't clobber a tool that returned its own `events` (console_read).
+    -- A tool that returned its own `events` (console_read) manages its own stream.
     if response.events ~= nil then return end
 
     local session = MCP:SessionFromRequestId(reqId)
@@ -55,7 +57,7 @@ local function attachEvents(reqId, response)
 
     local evts, maxSeq = MCP:DrainEventsSince(cursor)
     if #evts > 0 then
-        response.events = evts
+        response._mcp_passive = evts
         MCP._sessionCursor[session] = maxSeq
     end
 end

@@ -1,80 +1,21 @@
 namespace GModMcpServer.Host;
 
-/// <summary>How a console.log message is treated by the passive engine rail.</summary>
-public enum EngineLineClass
-{
-    Marker,     // MCP's "lua-error capture active" seam (see CaptureMarker)
-    McpNoise,   // our own [MCP] bridge logs
-    LuaError,   // "[ERROR] ..." — Lua rail owns these once capture is active
-    Warning,    // high-confidence engine-native warning — inlined
-    Notable,    // broad "might matter" — counted for the breadcrumb, not inlined
-    Benign,     // ignored
-}
-
 /// <summary>
-/// Classifies console.log message headers for the passive rail. Console.log has no
-/// severity or realm markers and interleaves engine output with addon Lua prints, so
-/// this can't be exhaustive — it's a <em>highlighter</em>, not a gate. The high-
-/// confidence <see cref="Signatures"/> are inlined; a broader "notable" heuristic is
-/// only counted (the breadcrumb); everything a caller might still want is in the raw
-/// <c>engine_log</c>. All three lists are tuned live against real spew.
+/// The only line-level judgments the unified stream makes — no importance
+/// classification (every message is surfaced equally, in console.log order). We only
+/// distinguish the two things that are about correctness, not priority: our own
+/// <c>[MCP]</c> bridge noise (dropped), and Lua error lines (so an uncorrelated one —
+/// e.g. a startup error from before capture was live — is typed as an error rather
+/// than plain engine output).
 /// </summary>
 public static class EngineLogFilter
 {
-    /// <summary>
-    /// Emitted by the Lua side (sh_capture.lua) when OnLuaError capture goes active.
-    /// Before this line in the stream, console.log is the ONLY source of Lua errors
-    /// (the rail didn't exist yet — startup errors); after it, the Lua rail owns them.
-    /// </summary>
-    public const string CaptureMarker = "lua-error capture active";
+    /// <summary>Our own bridge logs — dropped from the unified stream as internal noise.</summary>
+    public static bool IsMcpNoise(string header) =>
+        header.StartsWith("[MCP]", StringComparison.Ordinal);
 
-    // High-confidence serious engine-native signatures -> inlined. Case-sensitive:
-    // engine casing is stable, and it avoids "NaN" matching "nan" inside a word.
-    private static readonly string[] Signatures =
-    {
-        "Bad SetLocalOrigin", "Bad SetLocalAngles", "Crazy origin",
-        "unreasonable position", "NaN", "Host_Error", "Engine Error",
-        "SetupBones", "Bad bone", "overflow",
-    };
-
-    // Broad "might matter" hints for the breadcrumb count (case-insensitive; a fuzzy
-    // "go look" signal, so over-counting is acceptable).
-    private static readonly string[] NotableHints =
-    {
-        "Warning", "Error", "Bad ", "Invalid", "Failed", "Cannot", "NaN", "overflow", "Assert",
-    };
-
-    // Specific high-volume benign lines kept OUT of the notable count (observed spam).
-    private static readonly string[] BenignHints =
-    {
-        "Requesting texture value", "KeyValues Error", "custom font file",
-        "Extended Spawnmenu", "Adding Filesystem Addon", "Mounted ", "ErrorAPI",
-    };
-
-    public static EngineLineClass Classify(string header)
-    {
-        if (string.IsNullOrEmpty(header)) return EngineLineClass.Benign;
-        // Marker before McpNoise: the marker line is itself an [MCP] line.
-        if (header.Contains(CaptureMarker, StringComparison.Ordinal)) return EngineLineClass.Marker;
-        if (header.StartsWith("[ERROR]", StringComparison.Ordinal)) return EngineLineClass.LuaError;
-        if (header.StartsWith("[MCP]", StringComparison.Ordinal)) return EngineLineClass.McpNoise;
-        foreach (var s in Signatures)
-        {
-            if (header.Contains(s, StringComparison.Ordinal)) return EngineLineClass.Warning;
-        }
-        return IsNotable(header) ? EngineLineClass.Notable : EngineLineClass.Benign;
-    }
-
-    private static bool IsNotable(string header)
-    {
-        foreach (var b in BenignHints)
-        {
-            if (header.Contains(b, StringComparison.OrdinalIgnoreCase)) return false;
-        }
-        foreach (var h in NotableHints)
-        {
-            if (header.Contains(h, StringComparison.OrdinalIgnoreCase)) return true;
-        }
-        return false;
-    }
+    /// <summary>A Lua error line, by the engine's <c>[ERROR]</c> tag. Engine C++ errors
+    /// don't use this tag, so it identifies Lua errors specifically.</summary>
+    public static bool IsLuaErrorLine(string header) =>
+        header.StartsWith("[ERROR]", StringComparison.Ordinal);
 }
