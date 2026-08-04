@@ -24,7 +24,12 @@ internal static class Program
         "tool call) since this session's previous call — e.g. background hooks, timers, " +
         "autorefresh, or other addons. Treat \"events\" as game-side diagnostic context, " +
         "not part of the tool's primary result. The console_read_sv and console_read_cl " +
-        "tools poll the same buffer on demand.";
+        "tools poll the same buffer on demand. That buffer is Lua-only — it cannot see " +
+        "engine-native C++ console output (physics/transform warnings like \"Bad " +
+        "SetLocalOrigin\", asset/mount spew, engine errors). Those come from a separate " +
+        "rail: serious ones ride back as an \"engine_events\" array on tool results, and " +
+        "the engine_log tool reads the full console.log tail — both require GMod launched " +
+        "with -condebug (host_launch adds it).";
 
     public static async Task<int> Main(string[] args)
     {
@@ -49,6 +54,7 @@ internal static class Program
         var sessionId = Guid.NewGuid().ToString("N");
 
         builder.Services.AddSingleton(new BridgePaths(mcpRoot, sessionId, dataPath));
+        builder.Services.AddSingleton<EngineLog>();
         builder.Services.AddSingleton<ManifestWatcher>(sp =>
             new ManifestWatcher(mcpRoot, sp.GetRequiredService<ILoggerFactory>().CreateLogger<ManifestWatcher>()));
         builder.Services.AddSingleton<FileBridgeRegistry>(sp =>
@@ -192,9 +198,28 @@ internal static class Program
     private static async ValueTask<CallToolResult> CallToolAsync(
         RequestContext<CallToolRequestParams> ctx, CancellationToken ct)
     {
-        var name = ctx.Params?.Name ?? throw new ArgumentException("Tool name is required.");
         var services = ctx.Services ?? throw new InvalidOperationException("RequestContext.Services is null");
         services.GetRequiredService<McpServerAccessor>().TrySet(ctx.Server);
+
+        var result = await DispatchToolAsync(ctx, services, ct).ConfigureAwait(false);
+
+        // Passive engine-native warnings (console.log) ride back on every response as
+        // `engine_events` — the .NET-side parallel of the Lua `events` rail, for the C++
+        // output Lua can't capture. Best-effort: a log-tail hiccup must never break dispatch.
+        try
+        {
+            var engineLines = services.GetService<EngineLog>()?.DrainPassive();
+            if (engineLines is { Count: > 0 }) AppendEngineEvents(result, engineLines);
+        }
+        catch { /* engine-log capture is best-effort; the dispatch result stands */ }
+
+        return result;
+    }
+
+    private static async ValueTask<CallToolResult> DispatchToolAsync(
+        RequestContext<CallToolRequestParams> ctx, IServiceProvider services, CancellationToken ct)
+    {
+        var name = ctx.Params?.Name ?? throw new ArgumentException("Tool name is required.");
 
         // Host tools take precedence — they don't go through the file bridge.
         var hostTool = services.GetServices<IHostTool>().FirstOrDefault(t => t.Name == name);
@@ -350,6 +375,26 @@ internal static class Program
         if (!obj.TryGetPropertyValue("events", out var node)) return;
         if (node is not JsonArray arr || arr.Count == 0) return;
         blocks.Add(new TextContentBlock { Text = "events: " + arr.ToJsonString() });
+    }
+
+    /// <summary>
+    /// Append passive engine-native warnings (from console.log, curated by
+    /// <see cref="EngineLogFilter"/>) to a tool result as a trailing text block. A
+    /// distinct <c>engine_events</c> channel rather than merged into the Lua
+    /// <c>events</c> array: engine output is process-wide and unattributed, where
+    /// <c>events</c> is per-realm Lua output, and merging would blur the two. Runs
+    /// after both host- and bridge-tool dispatch, so it rides every response.
+    /// </summary>
+    internal static void AppendEngineEvents(CallToolResult result, IReadOnlyList<string> lines)
+    {
+        if (lines.Count == 0) return;
+        var arr = new JsonArray();
+        foreach (var line in lines) arr.Add(new JsonObject { ["kind"] = "engine", ["text"] = line });
+        var blocks = result.Content is null
+            ? new List<ContentBlock>()
+            : new List<ContentBlock>(result.Content);
+        blocks.Add(new TextContentBlock { Text = "engine_events: " + arr.ToJsonString() });
+        result.Content = blocks;
     }
 
     /// <summary>

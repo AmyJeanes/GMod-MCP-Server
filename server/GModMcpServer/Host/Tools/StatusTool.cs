@@ -10,12 +10,14 @@ public sealed class StatusTool : IHostTool
     private readonly GameProcessManager _proc;
     private readonly ManifestWatcher _manifest;
     private readonly BridgePinger _pinger;
+    private readonly EngineLog _engineLog;
 
-    public StatusTool(GameProcessManager proc, ManifestWatcher manifest, BridgePinger pinger)
+    public StatusTool(GameProcessManager proc, ManifestWatcher manifest, BridgePinger pinger, EngineLog engineLog)
     {
         _proc = proc;
         _manifest = manifest;
         _pinger = pinger;
+        _engineLog = engineLog;
     }
 
     public string Name => "host_status";
@@ -101,6 +103,20 @@ public sealed class StatusTool : IHostTool
         }
         bridgeNode["capabilities"] = capabilities;
 
+        // Engine-log capture: present when console.log exists (it persists across
+        // sessions since -condebug appends), recently_written when it grew in the
+        // last 30s — the practical "this session is actively logging" signal.
+        var lastWrite = _engineLog.LastWriteUtc;
+        var engineNode = new JsonObject
+        {
+            ["present"] = _engineLog.Present,
+            ["path"] = _engineLog.Path,
+            ["recently_written"] = lastWrite is { } t && (DateTime.UtcNow - t).TotalSeconds < 30,
+            ["note"] = _engineLog.Present
+                ? "console.log present; engine-native output is captured — read it with engine_log, and serious warnings ride passively on engine_events."
+                : "No console.log — engine output isn't captured. host_launch adds -condebug automatically; for a Steam-started game, add -condebug to its launch options.",
+        };
+
         var result = new JsonObject
         {
             ["ok"] = true,
@@ -112,6 +128,7 @@ public sealed class StatusTool : IHostTool
                 ["last_launch_args"] = string.IsNullOrEmpty(snap.LastArgs) ? null : snap.LastArgs,
             },
             ["bridge"] = bridgeNode,
+            ["engine_log"] = engineNode,
         };
 
         return HostToolHelpers.Ok(result.ToJsonString());

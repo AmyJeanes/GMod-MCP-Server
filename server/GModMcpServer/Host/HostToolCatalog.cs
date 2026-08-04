@@ -20,6 +20,7 @@ public static class HostToolCatalog
         typeof(StatusTool),
         typeof(ChangeLevelTool),
         typeof(ReloadTool),
+        typeof(EngineLogTool),
     };
 
     /// <summary>

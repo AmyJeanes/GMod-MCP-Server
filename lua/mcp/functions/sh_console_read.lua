@@ -5,7 +5,7 @@
 
 MCP:AddFunction({
     id = "console_read",
-    description = "Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. Pass `since` (the `cursor` from a previous call) to get only newer events; omit for everything retained.",
+    description = "Read recently captured console output and Lua errors that fired outside a tool call (background hooks, timers, autorefresh, other addons) in this realm. Pass `since` (the `cursor` from a previous call) to get only newer events; omit for everything retained. Captures Lua-originated output only (print/Msg + Lua errors); engine-native C++ messages (e.g. \"Bad SetLocalOrigin\", physics/asset warnings) are invisible here -- read those with the engine_log tool.",
     schema = {
         type = "object",
         properties = {

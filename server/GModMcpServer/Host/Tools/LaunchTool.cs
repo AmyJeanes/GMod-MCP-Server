@@ -15,12 +15,14 @@ public sealed class LaunchTool : IHostTool
 
     private readonly GameProcessManager _proc;
     private readonly BridgePinger _pinger;
+    private readonly EngineLog _engineLog;
     private readonly string _mcpRoot;
 
-    public LaunchTool(GameProcessManager proc, BridgePinger pinger, BridgePaths paths)
+    public LaunchTool(GameProcessManager proc, BridgePinger pinger, EngineLog engineLog, BridgePaths paths)
     {
         _proc = proc;
         _pinger = pinger;
+        _engineLog = engineLog;
         _mcpRoot = paths.McpRoot;
     }
 
@@ -100,6 +102,10 @@ public sealed class LaunchTool : IHostTool
             "-game", "garrysmod",
             "-novid",
             "+sv_lan", "1",
+            // Mirror the whole engine console (C++ warnings Lua can't see) to
+            // garrysmod/console.log, which EngineLog tails for engine_events /
+            // engine_log. Appends across launches; anchored below.
+            "-condebug",
         };
 
         if (console) argList.Add("-console");
@@ -135,6 +141,12 @@ public sealed class LaunchTool : IHostTool
         {
             userWindow = _proc.CaptureForegroundWindow();
         }
+
+        // Anchor engine-log passive surfacing to the current end of console.log
+        // BEFORE launch: -condebug appends, so this session's output starts at the
+        // pre-launch length. GMod isn't running yet (Launch throws otherwise), so
+        // this is a clean session boundary.
+        _engineLog.AnchorAtLaunch();
 
         Process p;
         try
