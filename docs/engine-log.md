@@ -59,6 +59,12 @@ warnings dominate (`Requesting texture value from var "$basetexture" ...`,
 engine lines passively would flood `events`, so the passive rail needs a
 **curated allowlist** of serious signatures; the explicit read returns everything.
 
+Allowlist tuning was validated against the real accumulated log: over 1380 lines
+it surfaced exactly 2 — the induced `unreasonable position` and the literal
+`Bad SetLocalOrigin(-nan(ind),...)` (the motivating case) — and none of the 1378
+noise lines. The case-sensitive `NaN` signature did not false-positive on the
+lowercase `-nan(ind)` in that same line.
+
 ## Locked design: keep the Lua rings, add engine as a complementary source
 
 Evidence settles the topology: the file is combined, unattributed, and its Lua
