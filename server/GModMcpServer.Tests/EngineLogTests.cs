@@ -209,7 +209,7 @@ public class EngineLogUnifyTests
     }
 
     [Test]
-    public void Unify_MapChange_DropsPreviousMapOutput()
+    public void Unify_ConsoleMapChange_SuppressesNewBoot_EmitsNotice()
     {
         var (log, p, tmp) = NewLog();
         try
@@ -219,12 +219,41 @@ public class EngineLogUnifyTests
             File.AppendAllText(p,
                 "old map line\n" +
                 "---- Host_Changelevel ----\n" +
-                "new map line one\nnew map line two\n");
+                "new map boot one\nnew map boot two\n");
 
             var u = log.Unify(NoJobs);
 
-            Assert.That(u.Select(e => e.Text), Is.EqualTo(new[] { "new map line one", "new map line two" }),
-                "the pre-change output is dropped, not stacked under the new map");
+            // A console-initiated change auto-anchors: old tail dropped, the incoming boot
+            // suppressed (on-demand via engine_log), and a single map_change notice emitted.
+            Assert.That(u, Has.Count.EqualTo(1));
+            Assert.That(u[0].Kind, Is.EqualTo("map_change"));
+            Assert.That(u.Select(e => e.Text), Does.Not.Contain("new map boot one"));
+
+            // Cursor jumped to now, so a later drain starts clean from there (no boot replay).
+            File.AppendAllText(p, "post-change activity\n");
+            var after = log.Unify(NoJobs);
+            Assert.That(after.Select(e => e.Text), Is.EqualTo(new[] { "post-change activity" }));
+        }
+        finally { Directory.Delete(tmp, true); }
+    }
+
+    [Test]
+    public void Unify_HardResetMapChange_AlsoSuppresses_ViaServerShuttingDown()
+    {
+        var (log, p, tmp) = NewLog();
+        try
+        {
+            log.Anchor();
+            log.Unify(NoJobs);
+            File.AppendAllText(p,
+                "old map tail\n" +
+                "Dropped Someone from server (Server shutting down)\n" +
+                "new boot a\nnew boot b\n");
+
+            var u = log.Unify(NoJobs);
+
+            Assert.That(u, Has.Count.EqualTo(1));
+            Assert.That(u[0].Kind, Is.EqualTo("map_change"));
         }
         finally { Directory.Delete(tmp, true); }
     }

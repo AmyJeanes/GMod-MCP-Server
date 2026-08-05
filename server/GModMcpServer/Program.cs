@@ -24,8 +24,10 @@ internal static class Program
         "previous call — engine-native C++ output AND both realms' Lua output, interleaved in " +
         "true console order (engine warnings like \"Bad SetLocalOrigin\", addon prints, Lua " +
         "errors, background hooks). Each entry has a `kind` (`engine`; `error` for a Lua " +
-        "[ERROR]; `job` for a background-job completion), the console `text` (multi-line " +
-        "messages kept whole), and a `count` for collapsed repeats. It's realm-independent — " +
+        "[ERROR]; `job` for a background-job completion; `map_change` a one-line notice that the " +
+        "map changed — the new map's boot is suppressed from this stream, read it with engine_log), " +
+        "the console `text` (multi-line messages kept whole), and a `count` for collapsed repeats. " +
+        "It's realm-independent — " +
         "the same process-wide console whichever realm's tool you called, with no realm tag " +
         "(use console_read_sv/cl for per-realm Lua). Treat \"events\" as game-side diagnostic " +
         "context, not part of the tool's primary result. Sourced from console.log, so it needs " +

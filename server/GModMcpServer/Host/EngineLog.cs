@@ -20,6 +20,9 @@ public sealed class EngineLog
 {
     private const string LogFileName = "console.log";
 
+    private const string MapChangeNotice =
+        "(map change detected - the new map's startup console is suppressed here; read it with engine_log)";
+
     private readonly EngineLogReader _reader;
     private readonly string _path;
     private readonly object _gate = new();
@@ -93,6 +96,12 @@ public sealed class EngineLog
     /// drain, in file order — each <c>engine</c> (or <c>error</c> for a real <c>[ERROR]</c>),
     /// <c>[MCP]</c> dropped, consecutive identical collapsed with a count — then the passed-in
     /// job-completion events appended (those are synthetic and not in console.log).
+    ///
+    /// A console-initiated map change (its marker reached mid-drain) auto-anchors: the old map's
+    /// tail is dropped, the incoming boot is skipped by jumping to now (it stays on-demand via
+    /// <c>engine_log</c>), and a single <c>map_change</c> notice is emitted in its place — so a
+    /// manual <c>map</c>/<c>changelevel</c> doesn't flood the next tool call with the whole new
+    /// boot. (Tool-driven changes anchor via <see cref="Anchor"/> and never reach this branch.)
     /// </summary>
     public IReadOnlyList<UnifiedEvent> Unify(IReadOnlyList<LuaEvent> jobEvents)
     {
@@ -107,16 +116,25 @@ public sealed class EngineLog
             else
             {
                 var raw = new List<UnifiedEvent>();
+                var mapChanged = false;
                 foreach (var m in EngineLogGrouping.Group(_reader.ReadFrom(ref _passiveCursor)))
                 {
-                    // A map change resets "current map": drop the old map's output drained in
-                    // this batch so a map switch doesn't dump the whole new boot atop the old.
-                    if (EngineLogFilter.IsMapChange(m.Header)) { raw.Clear(); continue; }
+                    // A console-initiated map change: treat it like Anchor — drop the old map's
+                    // tail, jump to now so the new map's boot is skipped (on-demand via
+                    // engine_log), and emit one notice below instead of the flood.
+                    if (EngineLogFilter.IsMapChange(m.Header))
+                    {
+                        raw.Clear();
+                        mapChanged = true;
+                        _passiveCursor = _reader.Length;
+                        break;
+                    }
                     if (EngineLogFilter.IsMcpNoise(m.Header)) continue;
                     var kind = EngineLogFilter.IsLuaError(m.Header, m.Text) ? "error" : "engine";
                     raw.Add(new UnifiedEvent(kind, m.Text, 1));
                 }
                 outEvents = Collapse(raw);
+                if (mapChanged) outEvents.Add(new UnifiedEvent("map_change", MapChangeNotice, 1));
             }
 
             foreach (var j in jobEvents) outEvents.Add(new UnifiedEvent("job", j.Text, 1));

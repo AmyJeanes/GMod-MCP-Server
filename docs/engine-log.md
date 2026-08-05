@@ -309,17 +309,27 @@ Each entry is `{ kind, text, count? }`:
   so it catches `[<addon>]`-prefixed *load* errors, which is how GMod formats startup
   errors — see `EngineLogFilter.IsLuaError`); `job` (background-job completions, passed
   through from the Lua ring under `_mcp_passive` since they're the one thing NOT in
-  console.log).
+  console.log); `map_change` (a one-line synthetic notice that the map flipped — see the
+  reset below).
 - `[MCP]` lines dropped; consecutive identical collapsed with `count`; multi-line grouped
   by indentation (`EngineLogGrouping`).
 - **No realm tag** — console.log is realm-blind. Use `console_read_sv/cl` for per-realm Lua.
 - **Start-at-now**: `host_launch` skips boot from the passive stream (boot is on demand via
   `engine_log`).
-- **Map-change reset** (`EngineLogFilter.IsMapChange`): on `---- Host_Changelevel ----` or
-  `(Server shutting down)` — which cover manual `changelevel`/`map`, `host_changelevel`, and
-  the two-stage bootstrap's `map` transition (`sv_launch_intent.lua`) — the passive stream
-  and the boot scan reset to the current map. So a map switch never dumps the new boot atop
-  the old, and the boot scan is scoped to the FINAL map (gm_construct falls away).
+- **Map-change reset & auto-anchor** (`EngineLogFilter.IsMapChange`): the two markers
+  `---- Host_Changelevel ----` (soft) and `(Server shutting down)` (hard `map`/reset) cover
+  every path — `host_changelevel`, a manual console `changelevel`/`map`, and the two-stage
+  bootstrap's `map` transition. **Tool-driven** changes `Anchor()` before the command, so
+  their own response skips the boot cleanly (start-at-now) and reports it via `startup_log`.
+  A **console-driven** change has no anchor, so when the passive drain *reaches* a marker it
+  auto-anchors: it drops the old map's tail, **jumps the cursor to now (skipping the incoming
+  boot — on-demand via `engine_log`)**, and emits a single `map_change` notice in place of the
+  ~200-line flood. So an agent that does a raw `map x` sees "the map changed" on its next call,
+  not the whole new boot. (Caveat: a call landing *mid-boot* catches the boot tail on the
+  following drain — rare; the common "next call after load" case is clean. Live-validated
+  2026-08-05: a manual `changelevel`/`map` had flooded a single unrelated call with 100+ boot
+  events before this.) The boot **scan** (`ScanBoot`) likewise resets on a marker, scoping
+  `boot_lua_errors` to the FINAL map (gm_construct falls away).
 
 **`engine_log`** (host tool, realm-independent): the raw console.log tail on demand,
 `since`/`limit`/`filter` — filter applies *before* limit (so `limit` bounds matches).
@@ -340,15 +350,17 @@ correlation/detection made it redundant.
 fired server-side vs client-side) shows as two entries — different text, un-mergeable without
 realm info.
 
-### REMAINING (do post-compact)
-1. ~~**`host_changelevel` consistency**~~ **DONE** (code, `ChangeLevelTool.cs`): injects
-   `EngineLog`, calls `Anchor()` before the changelevel, and attaches `startup_log` /
+### REMAINING
+1. ~~**`host_changelevel` consistency**~~ **DONE + LIVE-VALIDATED** (`c038d35`; `ChangeLevelTool.cs`):
+   injects `EngineLog`, calls `Anchor()` before the changelevel, and attaches `startup_log` /
    `boot_lua_errors` after ready via the shared `HostToolHelpers.AttachBootScan` — mirroring
    `LaunchTool`. (`AnchorAtLaunch` was renamed `Anchor()` since both launch and changelevel now
-   call it.) 79/79 tests pass in Release. **Still needs a Debug rebuild (MCP disable) + live
-   re-validate** that a `host_changelevel` response no longer dumps the new map's raw boot.
+   call it.) 79/79 tests pass in Release. Live-validated 2026-08-05 (freespace_revolution ->
+   gm_construct -> freespace_revolution): each response carried `startup_log` + `boot_lua_errors`
+   (the re-fired TARDIS load errors) and **no raw-boot `events` dump**; the next call after each
+   change surfaced only the ~3 genuinely-new lines, confirming start-at-now held.
 2. Optional: reconcile/trim the superseded sections of this doc into the final design.
-3. Then: confirm with the user, then **push** (main is ahead ~10, unpushed; also `behind 1`
+3. Then: confirm with the user, then **push** (main is ahead, unpushed; also `behind 1`
    = a benign Renovate codeql-action digest bump — rebase onto it at push time).
 
 **Build/validate note:** live MCP host is the Debug binary; build/test with `-c Release`
