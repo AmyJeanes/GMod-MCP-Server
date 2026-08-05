@@ -114,7 +114,14 @@ public class EngineLogFilterTests
     [TestCase("---- Host_Changelevel ----", true)]
     [TestCase("Dropped Divided (76561198) from server (Server shutting down)", true)]
     [TestCase("[MCP] map transition", true)] // the bootstrap sentinel (its `map` drops the player as "Disconnect by user.")
-    [TestCase("Dropped Divided (76561198) from server (Disconnect by user.)", false)] // the raw drop reason is NOT a marker
+    // Individual leaves carry their own reason, not a server-wide shutdown -> must NOT reset.
+    [TestCase("Dropped Divided (76561198) from server (Disconnect by user.)", false)]
+    [TestCase("Dropped MCPBot (0) from server (MCP bot_remove)", false)] // a bot being removed
+    [TestCase("Dropped Someone (123) from server (Kicked : timed out)", false)] // a kick
+    // Anchoring guards: the phrase inside a name / chat / trailing text must NOT false-match.
+    [TestCase("Dropped (Server shutting down) (76561198) from server (Disconnect by user.)", false)] // player NAMED like the marker, leaving
+    [TestCase("Bob: heads up (Server shutting down) soon", false)] // chat containing the phrase mid-line
+    [TestCase("[MCP] map transition happened later", false)] // sentinel must be the whole line
     [TestCase("Bad SetLocalOrigin(...)", false)]
     [TestCase("[MCP] Bridge polling started (server).", false)]
     public void IsMapChange(string line, bool expected) =>

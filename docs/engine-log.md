@@ -316,14 +316,19 @@ Each entry is `{ kind, text, count? }`:
 - **No realm tag** — console.log is realm-blind. Use `console_read_sv/cl` for per-realm Lua.
 - **Start-at-now**: `host_launch` skips boot from the passive stream (boot is on demand via
   `engine_log`).
-- **Map-change reset & auto-anchor** (`EngineLogFilter.IsMapChange`): the markers are
-  `---- Host_Changelevel ----` (soft) and `(Server shutting down)` (hard `map`/reset), plus an
+- **Map-change reset & auto-anchor** (`EngineLogFilter.IsMapChange`, an **anchored whole-line
+  regex** so a marker phrase inside a player name / chat / other text can't false-match): the
+  markers are `---- Host_Changelevel ----` (soft), the full drop line
+  `Dropped <who> from server (Server shutting down)` (hard `map`/reset/host-leave), plus an
   explicit `[MCP] map transition` sentinel `sv_launch_intent.lua` emits for the two-stage
   bootstrap transition — that transition's `map` fires so early the engine drops the player as
   `(Disconnect by user.)`, **not** `(Server shutting down)`, so it has no engine marker of its
   own (found live 2026-08-05: without the sentinel `ScanBoot` counted *both* bootstrap stages,
-  569 lines instead of the final map's ~240). Together they cover `host_changelevel`, a manual
-  console `changelevel`/`map`, and the bootstrap. **Tool-driven** changes `Anchor()` before the command, so
+  569 lines instead of the final map's ~278). `(Server shutting down)` is server-wide; an
+  **individual** player/bot leaving carries its own reason (`(Disconnect by user.)`, `(Kicked …)`,
+  a bot-remove reason) and is deliberately **not** a reset — verified live with a bot leave.
+  Together they cover `host_changelevel`, a manual console `changelevel`/`map`, and the bootstrap.
+  **Tool-driven** changes `Anchor()` before the command, so
   their own response skips the boot cleanly (start-at-now) and reports it via `startup_log`.
   A **console-driven** change has no anchor, so when the passive drain *reaches* a marker it
   auto-anchors: it drops the old map's tail, **jumps the cursor to now (skipping the incoming
