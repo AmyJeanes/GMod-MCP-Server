@@ -92,6 +92,11 @@ local function transition(reason)
     -- load (~3-5 s) on every host_launch; correctness wins over speed here.
     MsgN(string.format("[MCP] launch intent: %s -> %s (gamemode=%s).",
         game.GetMap(), targetMap, targetGm))
+    -- Sentinel the .NET boot scanner keys on to scope the startup log to the FINAL map: the
+    -- `map` below fires so early the engine drops the player as "(Disconnect by user.)", not
+    -- "(Server shutting down)", so the transition has no engine marker of its own to detect
+    -- (EngineLogFilter.IsMapChange).
+    MsgN("[MCP] map transition")
     RunConsoleCommand("gamemode", targetGm)
     RunConsoleCommand("map", targetMap)
 

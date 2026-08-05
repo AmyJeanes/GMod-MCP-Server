@@ -113,6 +113,8 @@ public class EngineLogFilterTests
 
     [TestCase("---- Host_Changelevel ----", true)]
     [TestCase("Dropped Divided (76561198) from server (Server shutting down)", true)]
+    [TestCase("[MCP] map transition", true)] // the bootstrap sentinel (its `map` drops the player as "Disconnect by user.")
+    [TestCase("Dropped Divided (76561198) from server (Disconnect by user.)", false)] // the raw drop reason is NOT a marker
     [TestCase("Bad SetLocalOrigin(...)", false)]
     [TestCase("[MCP] Bridge polling started (server).", false)]
     public void IsMapChange(string line, bool expected) =>
@@ -278,6 +280,34 @@ public class EngineLogUnifyTests
                 "gm_construct dropped at the map change; the final-map error is detected by stack and deduped");
             Assert.That(boot.LuaErrors[0], Does.Contain("final map error"));
             Assert.That(boot.TotalLines, Is.GreaterThan(0));
+        }
+        finally { Directory.Delete(tmp, true); }
+    }
+
+    [Test]
+    public void ScanBoot_ScopesToFinalMap_ViaBootstrapSentinel()
+    {
+        // The two-stage bootstrap's transition drops the player as "(Disconnect by user.)",
+        // NOT "(Server shutting down)", so scoping relies on the explicit [MCP] map transition
+        // sentinel sv_launch_intent.lua emits (else both stages get counted).
+        var (log, p, tmp) = NewLog();
+        try
+        {
+            log.Anchor(); // launch offset = 0 (empty file)
+            File.AppendAllText(p,
+                "gm_construct boot line\n" +
+                "[gmc] gmc.lua:1: gm_construct-stage error\n  1. stack\n" +   // dropped at the sentinel
+                "[MCP] launch intent: gm_construct -> real (gamemode=sandbox).\n" +
+                "[MCP] map transition\n" +                                    // sentinel -> reset to final map
+                "Dropped Divided (1) from server (Disconnect by user.)\n" +   // the raw drop reason - not itself a marker
+                "[aaa] real.lua:4: final map error\n   2. unknown - real.lua:4\n" +
+                "final clean line\n");
+
+            var boot = log.ScanBoot();
+
+            Assert.That(boot.LuaErrors, Has.Count.EqualTo(1),
+                "the gm_construct-stage error is dropped at the sentinel; only the final map's error survives");
+            Assert.That(boot.LuaErrors[0], Does.Contain("final map error"));
         }
         finally { Directory.Delete(tmp, true); }
     }

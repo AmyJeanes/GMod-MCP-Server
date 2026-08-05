@@ -316,10 +316,14 @@ Each entry is `{ kind, text, count? }`:
 - **No realm tag** — console.log is realm-blind. Use `console_read_sv/cl` for per-realm Lua.
 - **Start-at-now**: `host_launch` skips boot from the passive stream (boot is on demand via
   `engine_log`).
-- **Map-change reset & auto-anchor** (`EngineLogFilter.IsMapChange`): the two markers
-  `---- Host_Changelevel ----` (soft) and `(Server shutting down)` (hard `map`/reset) cover
-  every path — `host_changelevel`, a manual console `changelevel`/`map`, and the two-stage
-  bootstrap's `map` transition. **Tool-driven** changes `Anchor()` before the command, so
+- **Map-change reset & auto-anchor** (`EngineLogFilter.IsMapChange`): the markers are
+  `---- Host_Changelevel ----` (soft) and `(Server shutting down)` (hard `map`/reset), plus an
+  explicit `[MCP] map transition` sentinel `sv_launch_intent.lua` emits for the two-stage
+  bootstrap transition — that transition's `map` fires so early the engine drops the player as
+  `(Disconnect by user.)`, **not** `(Server shutting down)`, so it has no engine marker of its
+  own (found live 2026-08-05: without the sentinel `ScanBoot` counted *both* bootstrap stages,
+  569 lines instead of the final map's ~240). Together they cover `host_changelevel`, a manual
+  console `changelevel`/`map`, and the bootstrap. **Tool-driven** changes `Anchor()` before the command, so
   their own response skips the boot cleanly (start-at-now) and reports it via `startup_log`.
   A **console-driven** change has no anchor, so when the passive drain *reaches* a marker it
   auto-anchors: it drops the old map's tail, **jumps the cursor to now (skipping the incoming

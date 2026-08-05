@@ -15,16 +15,19 @@ public static partial class EngineLogFilter
         header.StartsWith("[MCP]", StringComparison.Ordinal);
 
     /// <summary>
-    /// A map change is starting — the reset boundary for "current map". Both engine signals
-    /// fire at load START (before the new map's addons load), so the new map's load errors
-    /// fall after them: <c>changelevel</c> prints <c>---- Host_Changelevel ----</c>, and a
-    /// <c>map</c> / hard reset drops the host player with <c>(Server shutting down)</c>.
-    /// Together these cover manual changes, host_changelevel, and the two-stage bootstrap
-    /// (which uses <c>map</c>).
+    /// A map change is starting — the reset boundary for "current map". The signals fire at
+    /// load START (before the new map's addons load), so the new map's load errors fall after
+    /// them: <c>changelevel</c> prints <c>---- Host_Changelevel ----</c>; a <c>map</c> / hard
+    /// reset drops the host player with <c>(Server shutting down)</c>. The two-stage bootstrap
+    /// transition is the exception — its <c>map</c> fires so early the engine drops the player
+    /// as <c>(Disconnect by user.)</c>, not <c>(Server shutting down)</c>, so it has no engine
+    /// marker; <c>sv_launch_intent.lua</c> emits an explicit <c>[MCP] map transition</c> sentinel
+    /// we key on instead. Together these cover manual changes, host_changelevel, and the bootstrap.
     /// </summary>
     public static bool IsMapChange(string line) =>
         line.Contains("---- Host_Changelevel ----", StringComparison.Ordinal)
-        || line.Contains("(Server shutting down)", StringComparison.Ordinal);
+        || line.Contains("(Server shutting down)", StringComparison.Ordinal)
+        || line.Contains("[MCP] map transition", StringComparison.Ordinal);
 
     /// <summary>
     /// Whether a (grouped) console message is a Lua error. Runtime errors are prefixed
