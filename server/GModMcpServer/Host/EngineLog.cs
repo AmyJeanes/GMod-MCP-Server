@@ -13,8 +13,8 @@ namespace GModMcpServer.Host;
 ///
 /// (Correlating Lua-rail events onto console.log lines to add realm/kind was tried and
 /// dropped: the console.log drain runs at response-processing time and almost always leads
-/// the Lua event's delivery, so enrichment fired inconsistently — worse than not at all.
-/// See docs/engine-log.md.)
+/// the Lua event's delivery, so enrichment fired inconsistently — worse than not at all.)
+///
 /// </summary>
 public sealed class EngineLog
 {
