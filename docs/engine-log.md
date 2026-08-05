@@ -290,3 +290,63 @@ command-line read (via PowerShell). Only the new .NET tool/pipeline code is unex
 launches. Correctness is unaffected (the tailer only reads forward from its anchor), but
 the file is never trimmed. If bounding it matters later, options are deleting
 `console.log` pre-launch or an opt-out arg — neither implemented (non-destructive default).
+
+---
+
+## FINAL design & status (2026-08-05) — supersedes every section above
+
+The sections above are the design *evolution*; this is what's **built + committed
+(`2b550e8`, local, unpushed) + validated live**. The interim ideas — separate rails,
+Lua-rail *enrichment*, the `[MCP] lua-error capture active` marker, the firehose
+sub-decision, and the pre/post-MCP boot buckets — were all **tried and dropped**; don't
+re-attempt them (why, below).
+
+**One unified `events` stream, sourced from `console.log` alone.** console.log already
+interleaves engine + both realms' Lua output in true order, so ordering and game-vs-engine
+dedup are free. `.NET` is the single emitter (`Program.CallToolAsync` → `EngineLog.Unify`).
+Each entry is `{ kind, text, count? }`:
+- `kind`: `engine`; `error` (a Lua error — detected by `[ERROR]` **or a numbered stack**,
+  so it catches `[<addon>]`-prefixed *load* errors, which is how GMod formats startup
+  errors — see `EngineLogFilter.IsLuaError`); `job` (background-job completions, passed
+  through from the Lua ring under `_mcp_passive` since they're the one thing NOT in
+  console.log).
+- `[MCP]` lines dropped; consecutive identical collapsed with `count`; multi-line grouped
+  by indentation (`EngineLogGrouping`).
+- **No realm tag** — console.log is realm-blind. Use `console_read_sv/cl` for per-realm Lua.
+- **Start-at-now**: `host_launch` skips boot from the passive stream (boot is on demand via
+  `engine_log`).
+- **Map-change reset** (`EngineLogFilter.IsMapChange`): on `---- Host_Changelevel ----` or
+  `(Server shutting down)` — which cover manual `changelevel`/`map`, `host_changelevel`, and
+  the two-stage bootstrap's `map` transition (`sv_launch_intent.lua`) — the passive stream
+  and the boot scan reset to the current map. So a map switch never dumps the new boot atop
+  the old, and the boot scan is scoped to the FINAL map (gm_construct falls away).
+
+**`engine_log`** (host tool, realm-independent): the raw console.log tail on demand,
+`since`/`limit`/`filter` — filter applies *before* limit (so `limit` bounds matches).
+Includes boot. **`host_status.engine_log.condebug`**: real from the process command line (WMI).
+**`host_launch`**: `startup_log` (line count + "read the full boot via engine_log") +
+`boot_lua_errors` (a flat deduped list of the loaded map's distinct Lua errors).
+
+**Why the dropped ideas failed:** enrichment — the console.log drain runs at
+response-processing time and leads the Lua event's delivery, so realm/kind enrichment fired
+*inconsistently* (worse than none). Pre/post-MCP boot buckets — realm-blindness + per-realm
+capture timing make a single temporal boundary wrong for one realm; unreliable. The marker —
+correlation/detection made it redundant.
+
+**Known limitation:** the same error on both realms with *different* stacks (e.g. `sound.Add`
+fired server-side vs client-side) shows as two entries — different text, un-mergeable without
+realm info.
+
+### REMAINING (do post-compact)
+1. **`host_changelevel` consistency** (`ChangeLevelTool.cs`): inject `EngineLog`, call
+   `AnchorAtLaunch()` before the changelevel and add the `ScanBoot` `startup_log` /
+   `boot_lua_errors` after ready — mirroring `LaunchTool`. Currently it dumps the new map's
+   raw boot on its response (validated); this makes both map-entry paths clean + consistent.
+   Needs a Debug rebuild (MCP disable) + live re-validate.
+2. Optional: reconcile/trim the superseded sections of this doc into the final design.
+3. Then: confirm with the user, then **push** (main is ahead ~10, unpushed; also `behind 1`
+   = a benign Renovate codeql-action digest bump — rebase onto it at push time).
+
+**Build/validate note:** live MCP host is the Debug binary; build/test with `-c Release`
+(separate `bin/`) to avoid the lock. Rebuild Debug (`dotnet build -c Debug`) only while MCP
+is disabled, then user re-enables. All 79 tests pass in Release.
