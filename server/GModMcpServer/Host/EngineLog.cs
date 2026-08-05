@@ -24,7 +24,7 @@ public sealed class EngineLog
     private readonly string _path;
     private readonly object _gate = new();
     private long _passiveCursor = -1; // -1 = start-at-now on the next drain
-    private long _launchOffset = -1;  // where this session's boot begins, for ScanBoot
+    private long _anchorOffset = -1;  // where the current map's boot begins (set by Anchor), for ScanBoot
 
     public EngineLog(BridgePaths paths)
     {
@@ -39,34 +39,37 @@ public sealed class EngineLog
     public DateTime? LastWriteUtc => File.Exists(_path) ? File.GetLastWriteTimeUtc(_path) : null;
 
     /// <summary>
-    /// Reset the unified stream to start-at-now on the next drain. Called at launch: this
-    /// session's boot (two-stage, hundreds of lines) is skipped from the passive stream —
-    /// it stays available raw via <c>engine_log</c> — so responses only carry what's new.
+    /// Mark a new-map boundary (a game launch or an in-game level change): reset the unified
+    /// stream to start-at-now on the next drain, and remember the current console.log length as
+    /// the boot offset for <see cref="ScanBoot"/>. The new map's boot (two-stage on launch,
+    /// hundreds of lines) is thus skipped from the passive stream — it stays available raw via
+    /// <c>engine_log</c> — so responses only carry what's new. Call it just before the launch or
+    /// changelevel command so the offset lands before any new-map output.
     /// </summary>
-    public void AnchorAtLaunch()
+    public void Anchor()
     {
         lock (_gate)
         {
             _passiveCursor = -1;            // passive stream starts at now (skips boot)
-            _launchOffset = _reader.Length; // ...but remember where boot begins, for ScanBoot
+            _anchorOffset = _reader.Length; // ...but remember where boot begins, for ScanBoot
         }
     }
 
     /// <summary>
-    /// Scan this session's startup console (from the launch anchor to now) for Lua errors,
-    /// split by whether they fired before or after MCP's error capture went live (the first
-    /// "[MCP] Bridge polling started" line). We live in the Lua realm, so startup errors
-    /// matter — and the passive stream skips boot, so host_launch surfaces these deliberately.
-    /// Also returns the total boot line count, so the caller can point at engine_log for the
-    /// full startup log.
+    /// Scan the current map's startup console (from the anchor to now) for Lua errors and
+    /// return them deduped, plus the boot line count. We live in the Lua realm, so startup
+    /// errors matter — and the passive stream skips boot, so host_launch / host_changelevel
+    /// surface these deliberately. Scoped to the FINAL map: a map change resets, so the
+    /// two-stage bootstrap's gm_construct stage falls away; the full startup console stays
+    /// available raw via engine_log.
     /// </summary>
     public BootScan ScanBoot()
     {
         lock (_gate)
         {
-            if (_launchOffset < 0) return BootScan.Empty;
+            if (_anchorOffset < 0) return BootScan.Empty;
 
-            var cursor = _launchOffset;
+            var cursor = _anchorOffset;
             var messages = EngineLogGrouping.Group(_reader.ReadFrom(ref cursor));
 
             // Scope to the FINAL map: a map change (the two-stage bootstrap's `map` transition,

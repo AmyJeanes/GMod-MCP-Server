@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using GModMcpServer;
 using GModMcpServer.Bridge;
+using GModMcpServer.Host;
 using GModMcpServer.Host.Tools;
 using GModMcpServer.Tests.Helpers;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -158,7 +159,7 @@ public class ChangeLevelToolTests
     {
         var pinger = new BridgePinger(registry);
         var paths = new BridgePaths(root.McpRoot, NewSessionId(), root.McpRoot);
-        return new ChangeLevelTool(pinger, registry, paths);
+        return new ChangeLevelTool(pinger, registry, new EngineLog(paths), paths);
     }
 
     private static Dictionary<string, JsonElement> Args(string json)

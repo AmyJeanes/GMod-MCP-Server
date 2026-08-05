@@ -26,12 +26,14 @@ public sealed class ChangeLevelTool : IHostTool
 
     private readonly BridgePinger _pinger;
     private readonly FileBridgeRegistry _bridges;
+    private readonly EngineLog _engineLog;
     private readonly string _mcpRoot;
 
-    public ChangeLevelTool(BridgePinger pinger, FileBridgeRegistry bridges, BridgePaths paths)
+    public ChangeLevelTool(BridgePinger pinger, FileBridgeRegistry bridges, EngineLog engineLog, BridgePaths paths)
     {
         _pinger = pinger;
         _bridges = bridges;
+        _engineLog = engineLog;
         _mcpRoot = paths.McpRoot;
     }
 
@@ -87,6 +89,12 @@ public sealed class ChangeLevelTool : IHostTool
         {
             return Err("A launch/level transition is already in progress; wait for it to finish (poll host_status).");
         }
+
+        // Anchor the engine-log passive stream to the current end of console.log before the
+        // level change fires: -condebug appends, so the new map's boot lands after this offset,
+        // behind the changelevel marker. That skips it from the passive stream and scopes it out
+        // of ScanBoot's final-map view — mirroring host_launch's clean session boundary.
+        _engineLog.Anchor();
 
         // Trigger the change on the server realm. The handler validates the map,
         // sets bootstrap_pending, writes the level_change marker, and issues the
@@ -159,6 +167,11 @@ public sealed class ChangeLevelTool : IHostTool
                 ?? $"Timed out after {timeout.TotalSeconds:F0}s waiting for '{map}' to load.";
             return HostToolHelpers.Err(result.ToJsonString());
         }
+
+        // Surface the new map's startup Lua errors (we live in the Lua realm) and point at the
+        // full startup console; the passive events stream skips boot. Mirrors host_launch.
+        var boot = _engineLog.ScanBoot();
+        HostToolHelpers.AttachBootScan(result, boot, "the level change");
 
         return HostToolHelpers.Ok(result.ToJsonString());
     }

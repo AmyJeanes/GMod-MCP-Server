@@ -324,8 +324,11 @@ Each entry is `{ kind, text, count? }`:
 **`engine_log`** (host tool, realm-independent): the raw console.log tail on demand,
 `since`/`limit`/`filter` — filter applies *before* limit (so `limit` bounds matches).
 Includes boot. **`host_status.engine_log.condebug`**: real from the process command line (WMI).
-**`host_launch`**: `startup_log` (line count + "read the full boot via engine_log") +
-`boot_lua_errors` (a flat deduped list of the loaded map's distinct Lua errors).
+**`host_launch` AND `host_changelevel`** both anchor before the map boundary and, once ready,
+report `startup_log` (line count + "read the full boot via engine_log") + `boot_lua_errors`
+(a flat deduped list of the loaded map's distinct Lua errors). The anchor+scan is one method
+each (`EngineLog.Anchor()` / `ScanBoot()`); the result-attach prose is a single shared helper
+(`HostToolHelpers.AttachBootScan(result, boot, boundaryPhrase)`) so the two tools can't drift.
 
 **Why the dropped ideas failed:** enrichment — the console.log drain runs at
 response-processing time and leads the Lua event's delivery, so realm/kind enrichment fired
@@ -338,11 +341,12 @@ fired server-side vs client-side) shows as two entries — different text, un-me
 realm info.
 
 ### REMAINING (do post-compact)
-1. **`host_changelevel` consistency** (`ChangeLevelTool.cs`): inject `EngineLog`, call
-   `AnchorAtLaunch()` before the changelevel and add the `ScanBoot` `startup_log` /
-   `boot_lua_errors` after ready — mirroring `LaunchTool`. Currently it dumps the new map's
-   raw boot on its response (validated); this makes both map-entry paths clean + consistent.
-   Needs a Debug rebuild (MCP disable) + live re-validate.
+1. ~~**`host_changelevel` consistency**~~ **DONE** (code, `ChangeLevelTool.cs`): injects
+   `EngineLog`, calls `Anchor()` before the changelevel, and attaches `startup_log` /
+   `boot_lua_errors` after ready via the shared `HostToolHelpers.AttachBootScan` — mirroring
+   `LaunchTool`. (`AnchorAtLaunch` was renamed `Anchor()` since both launch and changelevel now
+   call it.) 79/79 tests pass in Release. **Still needs a Debug rebuild (MCP disable) + live
+   re-validate** that a `host_changelevel` response no longer dumps the new map's raw boot.
 2. Optional: reconcile/trim the superseded sections of this doc into the final design.
 3. Then: confirm with the user, then **push** (main is ahead ~10, unpushed; also `behind 1`
    = a benign Renovate codeql-action digest bump — rebase onto it at push time).

@@ -140,7 +140,7 @@ public class EngineLogUnifyTests
         try
         {
             File.AppendAllText(p, "boot line before anchor\n");
-            log.AnchorAtLaunch();
+            log.Anchor();
             Assert.That(log.Unify(NoJobs), Is.Empty, "start-at-now: boot is not replayed");
 
             File.AppendAllText(p, "engine one\n[MCP] bridge noise\nengine two\n");
@@ -158,7 +158,7 @@ public class EngineLogUnifyTests
         var (log, p, tmp) = NewLog();
         try
         {
-            log.AnchorAtLaunch();
+            log.Anchor();
             log.Unify(NoJobs); // settle start-at-now
             File.AppendAllText(p, "[ERROR] addon/foo.lua:3: boom\n  1. stack frame\nnormal line\n");
 
@@ -178,7 +178,7 @@ public class EngineLogUnifyTests
         var (log, p, tmp) = NewLog();
         try
         {
-            log.AnchorAtLaunch();
+            log.Anchor();
             log.Unify(NoJobs);
             for (var i = 0; i < 4; i++) File.AppendAllText(p, "Bad SetLocalOrigin(nan) on prop\n");
 
@@ -196,7 +196,7 @@ public class EngineLogUnifyTests
         var (log, p, tmp) = NewLog();
         try
         {
-            log.AnchorAtLaunch();
+            log.Anchor();
             log.Unify(NoJobs);
             File.AppendAllText(p, "engine line\n");
 
@@ -214,7 +214,7 @@ public class EngineLogUnifyTests
         var (log, p, tmp) = NewLog();
         try
         {
-            log.AnchorAtLaunch();
+            log.Anchor();
             log.Unify(NoJobs); // settle start-at-now
             File.AppendAllText(p,
                 "old map line\n" +
@@ -235,7 +235,7 @@ public class EngineLogUnifyTests
         var (log, p, tmp) = NewLog();
         try
         {
-            log.AnchorAtLaunch(); // launch offset = 0 (empty file)
+            log.Anchor(); // launch offset = 0 (empty file)
             File.AppendAllText(p,
                 "[ERROR] bootstrap/gm.lua:1: gm_construct-stage error\n  1. stack\n" +  // dropped at the map change
                 "Dropped Someone from server (Server shutting down)\n" +                 // map change -> reset
