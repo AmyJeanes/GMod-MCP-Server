@@ -143,26 +143,32 @@ public sealed class EngineLog
     }
 
     /// <summary>
-    /// Explicit read for the <c>engine_log</c> tool — the raw console.log tail, no dedup.
-    /// <paramref name="since"/> &lt; 0 returns the recent tail; else new lines from that byte
-    /// cursor. Optional case-insensitive substring <paramref name="filter"/>.
+    /// Explicit read for the <c>engine_log</c> tool. Unfiltered: the raw console.log tail (no
+    /// grouping, no dedup) — the ground-truth "give me everything" read. With a
+    /// <paramref name="filter"/> substring and/or a <paramref name="kind"/>
+    /// (error/engine/map_change, classified like the passive stream), it switches to
+    /// message-aware selection: lines are grouped into whole logical messages (header + indented
+    /// continuation) and a match returns the message intact — so a multi-line Lua error is never
+    /// shredded into orphaned frames, and a <c>kind</c> read excludes benign lines a bare
+    /// substring would catch (e.g. <c>ErrorAPI:</c>). <paramref name="since"/> &lt; 0 returns the
+    /// recent tail; else new lines from that byte cursor.
     /// </summary>
-    // When filtering, read a generous window/backlog first so the filter isn't starved by
-    // the line limit (the limit applies to matches, not to raw lines scanned).
+    // When selecting by filter/kind, read a generous window first so the match isn't starved by
+    // the line limit (the limit bounds whole matched messages, not the raw lines scanned).
     private const int FilterScanMaxLines = 20000;
 
-    public EngineLogReadResult Read(long since, int limit, string? filter)
+    public EngineLogReadResult Read(long since, int limit, string? filter, string? kind = null)
     {
         lock (_gate)
         {
-            var hasFilter = !string.IsNullOrEmpty(filter);
+            var messageMode = !string.IsNullOrEmpty(filter) || !string.IsNullOrEmpty(kind);
             IReadOnlyList<string> lines;
             long cursor;
             var dropped = false;
 
             if (since < 0)
             {
-                (lines, cursor) = _reader.ReadTail(hasFilter ? FilterScanMaxLines : limit);
+                (lines, cursor) = _reader.ReadTail(messageMode ? FilterScanMaxLines : limit);
             }
             else
             {
@@ -172,19 +178,60 @@ public sealed class EngineLog
                 cursor = c;
             }
 
-            // Filter BEFORE applying the limit, so `limit` bounds matches, not raw lines.
-            if (hasFilter)
+            if (!messageMode)
             {
-                lines = lines.Where(l => l.Contains(filter!, StringComparison.OrdinalIgnoreCase)).ToList();
-            }
-            if (lines.Count > limit)
-            {
-                lines = lines.Skip(lines.Count - limit).ToList();
-                dropped = true;
+                // Raw tail: keep the most recent `limit` lines verbatim.
+                if (lines.Count > limit)
+                {
+                    lines = lines.Skip(lines.Count - limit).ToList();
+                    dropped = true;
+                }
+                return new EngineLogReadResult(lines, cursor, dropped, File.Exists(_path), _path);
             }
 
-            return new EngineLogReadResult(lines, cursor, dropped, File.Exists(_path), _path);
+            // Group first so a match pulls its WHOLE message (header + frames), never a fragment;
+            // `limit` then bounds whole matched messages (most recent) so output is never split.
+            var matched = EngineLogGrouping.Group(lines)
+                .Where(m => MatchesKind(m, kind) && MatchesFilter(m, filter))
+                .ToList();
+            var selected = TakeRecentWithinLineBudget(matched, limit, ref dropped);
+            var outLines = selected.SelectMany(m => m.Text.Split('\n')).ToList();
+            return new EngineLogReadResult(outLines, cursor, dropped, File.Exists(_path), _path);
         }
+    }
+
+    private static bool MatchesFilter(EngineLogMessage m, string? filter) =>
+        string.IsNullOrEmpty(filter) || m.Text.Contains(filter, StringComparison.OrdinalIgnoreCase);
+
+    // kind mirrors the passive stream's taxonomy (EngineLogFilter): a real Lua error, a
+    // map-change boundary, or "engine" for everything else ([MCP] noise excluded, as passively).
+    private static bool MatchesKind(EngineLogMessage m, string? kind) => kind switch
+    {
+        null or "" => true,
+        "error" => EngineLogFilter.IsLuaError(m.Header, m.Text),
+        "map_change" => EngineLogFilter.IsMapChange(m.Header),
+        "engine" => !EngineLogFilter.IsMcpNoise(m.Header)
+                    && !EngineLogFilter.IsLuaError(m.Header, m.Text)
+                    && !EngineLogFilter.IsMapChange(m.Header),
+        _ => true,
+    };
+
+    // Keep the most recent whole messages that fit the line budget; never split one. Always keep
+    // at least the most recent match; flag `dropped` when older matches are cut.
+    private static List<EngineLogMessage> TakeRecentWithinLineBudget(
+        List<EngineLogMessage> messages, int limit, ref bool dropped)
+    {
+        var picked = new List<EngineLogMessage>();
+        var used = 0;
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            var n = messages[i].Text.Count(c => c == '\n') + 1;
+            if (picked.Count > 0 && used + n > limit) { dropped = true; break; }
+            picked.Add(messages[i]);
+            used += n;
+        }
+        picked.Reverse();
+        return picked;
     }
 
     // Collapse consecutive identical messages into one with a count (the console's own

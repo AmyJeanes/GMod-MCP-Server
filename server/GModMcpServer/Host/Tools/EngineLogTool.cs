@@ -27,6 +27,10 @@ public sealed class EngineLogTool : IHostTool
         "read and includes the boot history the passive stream skips. Needs GMod launched with `-condebug` " +
         "(host_launch adds it; host_status.condebug confirms) — returns enabled=false with a hint otherwise. " +
         "Pass `since` (a `cursor` from a previous call) for only newer lines; omit for the recent tail. " +
+        "Filter with a case-insensitive `filter` substring or a structured `kind` " +
+        "(`error`/`engine`/`map_change`, classified like the passive stream); both match whole " +
+        "logical messages, so a multi-line Lua error comes back intact and `error` excludes benign " +
+        "`ErrorAPI:`-style lines a substring would catch. " +
         "Read-only, no capability required.";
 
     public JsonElement InputSchema { get; } = HostToolHelpers.ParseSchema("""
@@ -34,8 +38,9 @@ public sealed class EngineLogTool : IHostTool
       "type": "object",
       "properties": {
         "since":  { "type": "integer", "description": "Byte cursor from a previous call's `cursor`; returns only lines written since. Omit to return the recent tail." },
-        "limit":  { "type": "integer", "description": "Max lines to return, keeping the most recent (default 200, max 2000)." },
-        "filter": { "type": "string",  "description": "Only return lines containing this substring (case-insensitive). Applied after the tail/since selection." }
+        "limit":  { "type": "integer", "description": "Max lines to return, keeping the most recent (default 200, max 2000). With filter/kind, bounds whole matched messages within that line budget so none is split." },
+        "filter": { "type": "string",  "description": "Case-insensitive substring. Returns whole logical messages (header plus indented stack frames / continuation) that contain it — never an orphaned fragment. Applied after the tail/since selection." },
+        "kind":   { "type": "string",  "enum": ["error", "engine", "map_change"], "description": "Return only messages of this kind, classified like the passive `events` stream: `error` = real Lua errors (excludes benign `ErrorAPI:`-style lines a substring would catch), `engine` = other engine/Lua output, `map_change` = map-change boundaries. Combine with `filter` to require both." }
       },
       "required": []
     }
@@ -51,8 +56,16 @@ public sealed class EngineLogTool : IHostTool
         }
         var limit = Math.Clamp(HostToolHelpers.GetInt(args, "limit", 200), 1, MaxLimit);
         var filter = HostToolHelpers.GetString(args, "filter", "");
+        var kind = HostToolHelpers.GetString(args, "kind", "");
+        if (kind.Length > 0 && kind is not ("error" or "engine" or "map_change"))
+        {
+            return ValueTask.FromResult(HostToolHelpers.Err(
+                $"unknown kind '{kind}'; expected one of error, engine, map_change"));
+        }
 
-        var res = _log.Read(since, limit, string.IsNullOrEmpty(filter) ? null : filter);
+        var res = _log.Read(since, limit,
+            string.IsNullOrEmpty(filter) ? null : filter,
+            string.IsNullOrEmpty(kind) ? null : kind);
 
         var arr = new JsonArray();
         foreach (var line in res.Lines) arr.Add(line);

@@ -389,4 +389,86 @@ public class EngineLogReadTests
         }
         finally { Directory.Delete(tmp, true); }
     }
+
+    [Test]
+    public void Read_NoFilter_ReturnsRawTail_Unchanged()
+    {
+        var (log, p, tmp) = NewLog();
+        try
+        {
+            for (var i = 1; i <= 5; i++) File.AppendAllText(p, $"line{i}\n");
+
+            var res = log.Read(-1, 3, null);
+
+            Assert.That(res.Lines, Is.EqualTo(new[] { "line3", "line4", "line5" }));
+        }
+        finally { Directory.Delete(tmp, true); }
+    }
+
+    [Test]
+    public void Read_Filter_ReturnsWholeMultiLineMessage_NotOrphanFragments()
+    {
+        var (log, p, tmp) = NewLog();
+        try
+        {
+            File.AppendAllText(p,
+                "[ERROR] addon/foo.lua:3: attempt to index nil\n" +
+                "  1. error - [C]:-1\n" +
+                "  2. unknown - addon/foo.lua:3\n" +
+                "clean engine line\n");
+
+            // Substring matches only a stack frame; the WHOLE message must come back, header included.
+            var res = log.Read(-1, 200, "[C]:-1");
+
+            Assert.That(res.Lines, Does.Contain("[ERROR] addon/foo.lua:3: attempt to index nil"));
+            Assert.That(res.Lines, Does.Contain("  1. error - [C]:-1"));
+            Assert.That(res.Lines, Does.Contain("  2. unknown - addon/foo.lua:3"));
+            Assert.That(res.Lines, Does.Not.Contain("clean engine line"));
+        }
+        finally { Directory.Delete(tmp, true); }
+    }
+
+    [Test]
+    public void Read_KindError_SelectsRealErrors_ExcludesErrorApiFalsePositive()
+    {
+        var (log, p, tmp) = NewLog();
+        try
+        {
+            File.AppendAllText(p,
+                "ErrorAPI: database map_retexturizer registered\n" +   // contains "error" but is NOT a Lua error
+                "[ERROR] real.lua:2: boom\n  1. fn - real.lua:2\n" +
+                "just an engine line\n");
+
+            var res = log.Read(-1, 200, filter: null, kind: "error");
+
+            Assert.That(res.Lines, Does.Contain("[ERROR] real.lua:2: boom"));
+            Assert.That(res.Lines, Does.Contain("  1. fn - real.lua:2"));
+            Assert.That(res.Lines.Any(l => l.Contains("ErrorAPI")), Is.False);
+            Assert.That(res.Lines, Does.Not.Contain("just an engine line"));
+        }
+        finally { Directory.Delete(tmp, true); }
+    }
+
+    [Test]
+    public void Read_Filter_LimitBoundsWholeMessages_NeverSplitsOne()
+    {
+        var (log, p, tmp) = NewLog();
+        try
+        {
+            File.AppendAllText(p,
+                "[ERROR] a.lua:1: first\n  1. x - a.lua:1\n  2. y - a.lua:1\n" +   // 3-line message
+                "[ERROR] b.lua:2: second\n  1. x - b.lua:2\n  2. y - b.lua:2\n");   // 3-line message
+
+            // limit 4: the most-recent 3-line message fits; adding the older (total 6) would
+            // exceed it, so it's dropped whole rather than split.
+            var res = log.Read(-1, 4, "[ERROR]");
+
+            Assert.That(res.Lines, Is.EqualTo(new[]
+            {
+                "[ERROR] b.lua:2: second", "  1. x - b.lua:2", "  2. y - b.lua:2",
+            }));
+            Assert.That(res.Dropped, Is.True);
+        }
+        finally { Directory.Delete(tmp, true); }
+    }
 }
