@@ -49,7 +49,7 @@ Implemented by the .NET MCP server itself — available even when GMod isn't run
 | `host_status` | Report whether GMod is running, whether the MCP bridge is reachable (a live ping is sent when GMod is detected), and the current tool count and capability state. |
 | `host_changelevel` | Change the map of the already-running GMod server and block until the new map is ready before returning (the in-game sibling of host_launch's readiness wait). |
 | `mcp_reload` | Reload the in-game MCP addon (re-run its Lua and restart the bridge) and block until the bridge is back and ready before returning — the host-managed equivalent of running `mcp_reload` in the GMod console, but without the timeout a bare reload causes (the reload tears the bridge down mid-call). |
-| `engine_log` | Read the tail of GMod's engine console log (console.log) — the engine-native C++ output the Lua console_read tools structurally cannot see: physics/transform warnings (`Bad SetLocalOrigin`, `Crazy origin on entity`), asset/mount spew, engine errors. |
+| `engine_log` | Read the tail of GMod's engine console log (console.log) — the raw, unfiltered console: engine-native C++ output (`Bad SetLocalOrigin`, `Crazy origin`, asset/mount spew, engine errors) plus both realms' Lua output, interleaved. |
 <!-- TOOLS:HOST:END -->
 
 ### Game tools
