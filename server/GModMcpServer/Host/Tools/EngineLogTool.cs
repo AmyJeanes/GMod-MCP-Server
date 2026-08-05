@@ -20,13 +20,14 @@ public sealed class EngineLogTool : IHostTool
     public string Name => "engine_log";
 
     public string Description =>
-        "Read the tail of GMod's engine console log (console.log) — the engine-native C++ output the Lua " +
-        "console_read tools structurally cannot see: physics/transform warnings (`Bad SetLocalOrigin`, " +
-        "`Crazy origin on entity`), asset/mount spew, engine errors. Returns the raw unfiltered tail; the " +
-        "curated serious warnings also ride passively on other tool results' `engine_events`. Needs GMod " +
-        "launched with `-condebug` (host_launch adds it automatically; or set it in your Steam launch " +
-        "options) — returns enabled=false with a hint otherwise. Pass `since` (a `cursor` from a previous " +
-        "call) for only newer lines; omit for the recent tail. Read-only, no capability required.";
+        "Read the tail of GMod's engine console log (console.log) — the raw, unfiltered console: " +
+        "engine-native C++ output (`Bad SetLocalOrigin`, `Crazy origin`, asset/mount spew, engine errors) " +
+        "plus both realms' Lua output, interleaved. Tool results also carry a live unified `events` stream " +
+        "from this same log (deduped, in true order, [MCP] noise removed); engine_log is the on-demand raw " +
+        "read and includes the boot history the passive stream skips. Needs GMod launched with `-condebug` " +
+        "(host_launch adds it; host_status.condebug confirms) — returns enabled=false with a hint otherwise. " +
+        "Pass `since` (a `cursor` from a previous call) for only newer lines; omit for the recent tail. " +
+        "Read-only, no capability required.";
 
     public JsonElement InputSchema { get; } = HostToolHelpers.ParseSchema("""
     {

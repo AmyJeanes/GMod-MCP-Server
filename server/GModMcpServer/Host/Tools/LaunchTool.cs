@@ -256,7 +256,28 @@ public sealed class LaunchTool : IHostTool
             result["focus_reconcile"] = await ReconcileFocusAsync(client, background, ct).ConfigureAwait(false);
         }
 
+        // Startup Lua errors matter (we live in the Lua realm) and the passive events stream
+        // starts fresh after launch, so surface the loaded map's startup errors deliberately —
+        // a deduped list of the distinct broken things; the full startup console stays on demand
+        // via engine_log. (Scoped to the final map: the two-stage bootstrap's gm_construct stage
+        // is dropped at its map-change boundary.)
+        var boot = _engineLog.ScanBoot();
+        result["startup_log"] =
+            $"{boot.TotalLines} console lines in the loaded map's startup. The passive `events` stream starts "
+            + "fresh after launch (boot is not replayed); read the full startup console with engine_log (since: 0).";
+        if (boot.HasErrors)
+        {
+            result["boot_lua_errors"] = ToJsonArray(boot.LuaErrors);
+        }
+
         return HostToolHelpers.Ok(result.ToJsonString());
+    }
+
+    private static JsonArray ToJsonArray(IReadOnlyList<string> items)
+    {
+        var arr = new JsonArray();
+        foreach (var s in items) arr.Add(s);
+        return arr;
     }
 
     private static string ReadinessHint(BridgePingResult server, BridgePingResult client, TimeSpan timeout)

@@ -4,27 +4,27 @@ namespace GModMcpServer.Host;
 /// Host-side access to GMod's engine console log (<c>garrysmod/console.log</c>) and the
 /// producer of the unified <c>events</c> stream. Singleton.
 ///
-/// The unified stream uses <c>console.log</c> as the single spine — it already contains
-/// engine output and both realms' Lua output interleaved in true order — so ordering and
-/// game-vs-engine dedup come for free (each line is emitted once, in file order). The Lua
-/// rail is only an <em>enrichment side-input</em>: its events (fed in per response) are
-/// buffered and matched against console.log lines by exact text (errors by substring, since
-/// the rail carries the clean message and the file has <c>[ERROR] …</c> + stack), so a
-/// Lua-originated line is shown once in its clean, realm-tagged form rather than twice. No
-/// importance classification — every non-<c>[MCP]</c> message is surfaced equally.
+/// <c>console.log</c> is the single source: it already contains engine output and both
+/// realms' Lua output interleaved in true order, so ordering and game-vs-engine dedup come
+/// for free (each line emitted once, in file order). No importance classification and no
+/// per-line source enrichment — every non-<c>[MCP]</c> message is surfaced equally as
+/// <c>engine</c> (or <c>error</c> for a real <c>[ERROR]</c> line). The one thing that isn't
+/// in console.log — background-job completions — is passed through from the Lua ring.
 ///
-/// See <c>docs/engine-log.md</c> for the empirical basis and the timing caveat.
+/// (Correlating Lua-rail events onto console.log lines to add realm/kind was tried and
+/// dropped: the console.log drain runs at response-processing time and almost always leads
+/// the Lua event's delivery, so enrichment fired inconsistently — worse than not at all.
+/// See docs/engine-log.md.)
 /// </summary>
 public sealed class EngineLog
 {
     private const string LogFileName = "console.log";
-    private const int MaxBufferedLuaEvents = 2000;
 
     private readonly EngineLogReader _reader;
     private readonly string _path;
     private readonly object _gate = new();
-    private readonly List<BufferedLua> _buffer = new();
-    private long _passiveCursor = -1; // -1 = not yet anchored (start-at-now on first drain)
+    private long _passiveCursor = -1; // -1 = start-at-now on the next drain
+    private long _launchOffset = -1;  // where this session's boot begins, for ScanBoot
 
     public EngineLog(BridgePaths paths)
     {
@@ -39,127 +39,131 @@ public sealed class EngineLog
     public DateTime? LastWriteUtc => File.Exists(_path) ? File.GetLastWriteTimeUtc(_path) : null;
 
     /// <summary>
-    /// Anchor the unified stream to the current end of file, and clear the correlation
-    /// buffer. Called at launch: this session's output starts here (-condebug appends), so
-    /// anchoring scopes to it without replaying prior sessions; old buffered Lua events are
-    /// stale.
+    /// Reset the unified stream to start-at-now on the next drain. Called at launch: this
+    /// session's boot (two-stage, hundreds of lines) is skipped from the passive stream —
+    /// it stays available raw via <c>engine_log</c> — so responses only carry what's new.
     /// </summary>
     public void AnchorAtLaunch()
     {
         lock (_gate)
         {
-            _passiveCursor = _reader.Length;
-            _buffer.Clear();
+            _passiveCursor = -1;            // passive stream starts at now (skips boot)
+            _launchOffset = _reader.Length; // ...but remember where boot begins, for ScanBoot
         }
     }
 
     /// <summary>
-    /// Produce the unified events for this response: ingest the response's Lua events into
-    /// the correlation buffer, drain new console.log lines, and emit them in file order —
-    /// each Lua-originated line enriched from the rail (deduped against its raw copy),
-    /// engine-native lines raw, <c>[MCP]</c> dropped, consecutive identical messages collapsed
-    /// with a count. <paramref name="realm"/> tags the Lua events (the responding realm).
+    /// Scan this session's startup console (from the launch anchor to now) for Lua errors,
+    /// split by whether they fired before or after MCP's error capture went live (the first
+    /// "[MCP] Bridge polling started" line). We live in the Lua realm, so startup errors
+    /// matter — and the passive stream skips boot, so host_launch surfaces these deliberately.
+    /// Also returns the total boot line count, so the caller can point at engine_log for the
+    /// full startup log.
     /// </summary>
-    public IReadOnlyList<UnifiedEvent> Unify(IReadOnlyList<LuaEvent> luaEvents, string? realm)
+    public BootScan ScanBoot()
     {
         lock (_gate)
         {
-            foreach (var e in luaEvents) _buffer.Add(new BufferedLua(e.Text, e.Kind, realm));
-            TrimBuffer();
+            if (_launchOffset < 0) return BootScan.Empty;
 
-            if (_passiveCursor < 0)
-            {
-                // Start-at-now (attaching mid-session): don't replay history.
-                _passiveCursor = _reader.Length;
-                return Array.Empty<UnifiedEvent>();
-            }
+            var cursor = _launchOffset;
+            var messages = EngineLogGrouping.Group(_reader.ReadFrom(ref cursor));
 
-            var lines = _reader.ReadFrom(ref _passiveCursor);
-            if (lines.Count == 0) return Array.Empty<UnifiedEvent>();
-
-            var messages = EngineLogGrouping.Group(lines);
-            var outEvents = new List<UnifiedEvent>();
+            // Scope to the FINAL map: a map change (the two-stage bootstrap's `map` transition,
+            // then any later one) resets, so gm_construct's errors fall away. Then dedup — the
+            // final map still loads each addon per realm, so identical errors repeat.
+            var errors = new List<string>();
+            var seen = new HashSet<string>();
+            var lines = 0;
             foreach (var m in messages)
             {
-                if (EngineLogFilter.IsMcpNoise(m.Header)) continue; // our own bridge noise
-
-                var match = TakeMatch(m.Header);
-                if (match is not null)
-                {
-                    // Lua-originated: the rail's clean, realm-tagged form, once.
-                    outEvents.Add(new UnifiedEvent(match.Kind, match.Text, match.Realm, 1));
-                }
-                else if (EngineLogFilter.IsLuaErrorLine(m.Header))
-                {
-                    // A Lua error with no correlating rail event (e.g. a startup error from
-                    // before capture was live): raw, with its stack, typed as an error.
-                    outEvents.Add(new UnifiedEvent("error", m.Text, null, 1));
-                }
-                else
-                {
-                    // Engine-native (or an un-correlated Lua line): raw, in place.
-                    outEvents.Add(new UnifiedEvent("engine", m.Text, null, 1));
-                }
+                if (EngineLogFilter.IsMapChange(m.Header)) { errors.Clear(); seen.Clear(); lines = 0; continue; }
+                lines++;
+                if (EngineLogFilter.IsLuaError(m.Header, m.Text) && seen.Add(m.Text)) errors.Add(m.Text);
             }
-            return Collapse(outEvents);
+            return new BootScan(lines, errors);
         }
     }
 
     /// <summary>
-    /// Explicit read for the <c>engine_log</c> tool — the raw console.log tail, no dedup or
-    /// enrichment. <paramref name="since"/> &lt; 0 returns the recent tail; else new lines
-    /// from that byte cursor. Optional case-insensitive substring <paramref name="filter"/>.
+    /// Produce the unified events for this response: new console.log lines since the last
+    /// drain, in file order — each <c>engine</c> (or <c>error</c> for a real <c>[ERROR]</c>),
+    /// <c>[MCP]</c> dropped, consecutive identical collapsed with a count — then the passed-in
+    /// job-completion events appended (those are synthetic and not in console.log).
     /// </summary>
+    public IReadOnlyList<UnifiedEvent> Unify(IReadOnlyList<LuaEvent> jobEvents)
+    {
+        lock (_gate)
+        {
+            List<UnifiedEvent> outEvents;
+            if (_passiveCursor < 0)
+            {
+                _passiveCursor = _reader.Length; // start-at-now: skip history
+                outEvents = new List<UnifiedEvent>();
+            }
+            else
+            {
+                var raw = new List<UnifiedEvent>();
+                foreach (var m in EngineLogGrouping.Group(_reader.ReadFrom(ref _passiveCursor)))
+                {
+                    // A map change resets "current map": drop the old map's output drained in
+                    // this batch so a map switch doesn't dump the whole new boot atop the old.
+                    if (EngineLogFilter.IsMapChange(m.Header)) { raw.Clear(); continue; }
+                    if (EngineLogFilter.IsMcpNoise(m.Header)) continue;
+                    var kind = EngineLogFilter.IsLuaError(m.Header, m.Text) ? "error" : "engine";
+                    raw.Add(new UnifiedEvent(kind, m.Text, 1));
+                }
+                outEvents = Collapse(raw);
+            }
+
+            foreach (var j in jobEvents) outEvents.Add(new UnifiedEvent("job", j.Text, 1));
+            return outEvents;
+        }
+    }
+
+    /// <summary>
+    /// Explicit read for the <c>engine_log</c> tool — the raw console.log tail, no dedup.
+    /// <paramref name="since"/> &lt; 0 returns the recent tail; else new lines from that byte
+    /// cursor. Optional case-insensitive substring <paramref name="filter"/>.
+    /// </summary>
+    // When filtering, read a generous window/backlog first so the filter isn't starved by
+    // the line limit (the limit applies to matches, not to raw lines scanned).
+    private const int FilterScanMaxLines = 20000;
+
     public EngineLogReadResult Read(long since, int limit, string? filter)
     {
         lock (_gate)
         {
+            var hasFilter = !string.IsNullOrEmpty(filter);
             IReadOnlyList<string> lines;
             long cursor;
             var dropped = false;
 
             if (since < 0)
             {
-                (lines, cursor) = _reader.ReadTail(limit);
+                (lines, cursor) = _reader.ReadTail(hasFilter ? FilterScanMaxLines : limit);
             }
             else
             {
                 var c = since;
-                var read = _reader.ReadFrom(ref c);
+                lines = _reader.ReadFrom(ref c);
                 if (c < since) dropped = true;
-                if (read.Count > limit) { read = read.Skip(read.Count - limit).ToList(); dropped = true; }
-                lines = read;
                 cursor = c;
             }
 
-            if (!string.IsNullOrEmpty(filter))
+            // Filter BEFORE applying the limit, so `limit` bounds matches, not raw lines.
+            if (hasFilter)
             {
-                lines = lines.Where(l => l.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+                lines = lines.Where(l => l.Contains(filter!, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+            if (lines.Count > limit)
+            {
+                lines = lines.Skip(lines.Count - limit).ToList();
+                dropped = true;
             }
 
             return new EngineLogReadResult(lines, cursor, dropped, File.Exists(_path), _path);
         }
-    }
-
-    // Find and remove the first buffered Lua event whose text this console.log line
-    // corresponds to — exact match for print/msg, substring for errors (the rail has the
-    // clean message; the file has "[ERROR] <message>" + stack).
-    private BufferedLua? TakeMatch(string header)
-    {
-        for (var i = 0; i < _buffer.Count; i++)
-        {
-            var b = _buffer[i];
-            var matched = b.Kind == "error"
-                ? header.Contains(b.Text, StringComparison.Ordinal)
-                : header == b.Text;
-            if (matched) { _buffer.RemoveAt(i); return b; }
-        }
-        return null;
-    }
-
-    private void TrimBuffer()
-    {
-        while (_buffer.Count > MaxBufferedLuaEvents) _buffer.RemoveAt(0);
     }
 
     // Collapse consecutive identical messages into one with a count (the console's own
@@ -169,8 +173,7 @@ public sealed class EngineLog
         var outl = new List<UnifiedEvent>();
         foreach (var it in items)
         {
-            if (outl.Count > 0 && outl[^1].Kind == it.Kind && outl[^1].Text == it.Text
-                && outl[^1].Realm == it.Realm)
+            if (outl.Count > 0 && outl[^1].Kind == it.Kind && outl[^1].Text == it.Text)
             {
                 outl[^1] = outl[^1] with { Count = outl[^1].Count + 1 };
             }
@@ -188,16 +191,23 @@ public sealed class EngineLog
         var modDir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(dataPath));
         return modDir is null ? LogFileName : System.IO.Path.Combine(modDir, LogFileName);
     }
-
-    private sealed record BufferedLua(string Text, string Kind, string? Realm);
 }
 
-/// <summary>A Lua-rail event fed in for correlation: its kind (print/msg/error) and text.</summary>
+/// <summary>A passive Lua-ring event passed through for the unified stream — used for
+/// job completions (kind "job"), which aren't in console.log.</summary>
 public sealed record LuaEvent(string Kind, string Text);
 
-/// <summary>One entry in the unified stream: kind, text, optional realm (Lua-originated), and
-/// a repeat count.</summary>
-public sealed record UnifiedEvent(string Kind, string Text, string? Realm, int Count);
+/// <summary>One entry in the unified stream: kind (engine/error/job), text, repeat count.</summary>
+public sealed record UnifiedEvent(string Kind, string Text, int Count);
+
+/// <summary>Startup scan of the final map's load: its console line count and the distinct
+/// (deduped) Lua errors.</summary>
+public sealed record BootScan(int TotalLines, IReadOnlyList<string> LuaErrors)
+{
+    public static readonly BootScan Empty = new(0, Array.Empty<string>());
+
+    public bool HasErrors => LuaErrors.Count > 0;
+}
 
 public sealed record EngineLogReadResult(
     IReadOnlyList<string> Lines, long Cursor, bool Dropped, bool Present, string Path);
