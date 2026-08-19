@@ -23,6 +23,7 @@ local MAX_TTL = 3600     -- ttl hard cap (seconds)
 -- Compile a caller snippet as a function body receiving the hook's args as `...`.
 ---@param src string
 ---@param name string
+---@return function? fn, string? err
 local function compileBody(src, name)
     local chunk = CompileString("return function(...)\n" .. src .. "\nend", name, false)
     if type(chunk) == "string" then return nil, chunk end

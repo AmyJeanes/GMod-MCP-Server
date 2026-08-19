@@ -2,10 +2,11 @@
     "runtime": {
         "version": "LuaJIT"
     },
+    "gmod": {
+        "annotationsPath": "./.tools/glua-api"
+    },
     "workspace": {
-        "library": [
-            "./.tools/glua-api"
-        ],
+        "library": [],
         "ignoreGlobs": [
             ".tools/*.zip"
         ]

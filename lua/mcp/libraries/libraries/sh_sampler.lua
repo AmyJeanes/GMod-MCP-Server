@@ -21,6 +21,7 @@ local DEFAULT_HIST_CAP = 100      -- max distinct values returned in the histogr
 -- hook's args as `...`. Returns the function, or nil + the compile error string.
 ---@param src string
 ---@param name string
+---@return function? fn, string? err
 function MCP.sampler.Compile(src, name)
     local chunk = CompileString("return function(state, ...)\n" .. src .. "\nend", name, false)
     if type(chunk) == "string" then return nil, chunk end

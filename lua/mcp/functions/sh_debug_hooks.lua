@@ -74,7 +74,8 @@ MCP:AddFunction({
                         if #rows < limit then
                             local row = { event = ev, name = idStr, is_string_name = isStr }
                             if includeSource and isfunction(fn) then
-                                local ok, info = pcall(debug.getinfo, fn, "S")
+                                -- glua_ls upstream: the debug.getinfo stub's base signature is the thread-first (thread, f, what) form, so passing it as a value to pcall mismatches; cast to GMod's (f, what) form -- https://github.com/Pollux12/annotations-gmod-glua-ls/pull/19
+                                local ok, info = pcall(debug.getinfo --[[@as fun(f: function, what: string): debuglib.DebugInfo]], fn, "S")
                                 if ok and info then
                                     row.source = info.short_src
                                     row.line = info.linedefined
