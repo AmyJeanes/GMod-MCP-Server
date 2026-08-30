@@ -51,5 +51,5 @@ Override with `--addons-dir` / `--projects-root` / `--state` only if a layout di
 
 ## Notes
 
-- Realm rule from the codebase: tool names carry `_sv`/`_cl`; don't include realm in proposed `id` fields (see CLAUDE.md).
+- Realm rule from the codebase: tool names carry `_sv`/`_cl`; don't include realm in proposed `id` fields (see AGENTS.md).
 - Focus on patterns that **recur and generalize**; ignore one-off debugging Lua. Addon-internal implementation churn (e.g. a rendering addon's `render.*`/stencil pipeline) is not general test tooling — call it out, don't promote it.

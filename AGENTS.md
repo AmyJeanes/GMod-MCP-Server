@@ -1,0 +1,220 @@
+# AGENTS.md
+
+Shared agent guidance for this repository.
+
+## Project
+
+Two-part project: a GMod addon (`lua/`) and a .NET MCP server (`server/`). The repo IS the addon — `git clone` directly into `garrysmod/addons/` and GMod loads it. Anything outside `lua/`, `materials/`, `models/`, `sound/`, `resource/`, and the `addon.json` is ignored by the engine.
+
+The bridge between the two halves is **file-based IPC** under `garrysmod/data/mcp/`. Pure Lua on the GMod side — no binary modules. See `docs/protocol.md` for the wire format.
+
+## Module system
+
+`lua/autorun/mcp.lua` bootstraps everything via `MCP:LoadFolder` with `sh_/cl_/sv_` prefix dispatch. Load order is intentional, deepest libraries first:
+
+```
+MCP:LoadFolder("libraries/libraries")
+MCP:LoadFolder("libraries")
+MCP:LoadFolder("functions")
+```
+
+Adding a library something else depends on means putting it deep enough that it loads first.
+
+### Realm is implicit from file prefix
+
+A `sh_lua_run.lua` is included on both server and client, so `MCP:AddFunction` runs once per realm. Don't add a `realm` field to the registration table — the framework reads `SERVER`/`CLIENT`. `sv_*` and `cl_*` files only register on their respective realm.
+
+### Tool naming
+
+The framework always appends `_sv` or `_cl` to the MCP tool name on the .NET side, so realm is always visible in the tool list. Don't include `_sv`/`_cl` in your `id` field. Likewise the .NET host appends `(server realm)`/`(client realm)` to every tool's `description`, so **don't state the realm in the description** — hand-writing "Server realm." is redundant (same principle as not hand-writing capability prose, below). Keep only cross-realm *semantics* worth knowing — how a `sh_` tool's `_sv` and `_cl` differ or agree (PVS divergence, client-prediction drift, identical results) — never the bare realm label.
+
+Name a tool that's one of several acting on the same noun **subject-first, `<subject>_<op>`**, so the family sorts together: the read-half is `<subject>_state` (a rich structured read) and the write-half is `<subject>_set` — `entity_state`/`entity_set`, `player_state`/`player_set`, `game_state`/`game_set`, `cvar_state`/`cvar_set`. Other ops keep the subject-first verb form (`entity_find`, `player_walk`, `bot_spawn`). A true one-off belonging to no family is verb-first (`screenshot`, `reload_file`).
+
+### Client bridge runs only for the listen-server host
+
+The client-realm bridge serves the listen/SP **host** — the machine whose `data/mcp/` the .NET host shares. `IsListenServerHost()` needs a valid `LocalPlayer()` (not available at autorun), so the client bridge starts for everyone and a non-host client (a remote player on a listen server) stops its own bridge once `LocalPlayer()` becomes valid (`clientHostGate` in `sh_filebridge.lua`). Single-player is always the host. Consequence: dual-realm readiness (and the focus fix below) assume the local game is a listen/SP host — always true for a `host_launch`-started game.
+
+## Capabilities
+
+Sensitive tools declare `requires = { "<cap-id>" }` (whole-tool). Capabilities are registered with `MCP:AddCapability({ id = "...", default = false })` — the framework auto-derives the convar (`mcp_allow_<id>`) and creates it `FCVAR_PROTECTED | FCVAR_DONTRECORD | FCVAR_REPLICATED | FCVAR_ARCHIVE`. Replicated so server-side toggles propagate to clients; archived so user grants persist across game restarts. Don't reach for the convar directly; let the framework gate.
+
+To gate **one argument** of an otherwise-ungated tool, declare `arg_requires = { [argName] = { "<cap-id>" } }`. Dispatch (`MCP:CheckCapabilities`) rejects that arg when ungranted but only if it's actually present, so the rest of the tool stays callable — `player_walk`'s caller-Lua `until` is the canonical case. Gated names must be declared schema properties (typos error at registration). Per-arg gates aren't carried in the manifest; the description is how clients learn of them.
+
+For **both** levels the framework auto-appends the human note (`Requires the \`unsafe\` capability.`) to the tool/arg `description` at registration — so **don't hand-write capability prose**; declaring `requires`/`arg_requires` is enough, and the advertised note can't drift from the gate.
+
+Built-in capabilities live in `lua/mcp/libraries/sh_capabilities.lua` — three: **`unsafe`** (arbitrary code: `lua_run`, `console_cmd`, `cvar_set`, `debug_record`/`debug_draw`), **`player_control`** (structured tools that drive the local player: `player_set`, `player_walk`), and **`world_control`** (structured world mutation: `entity_create`/`remove`/`set`, `game_set`, `bot_spawn`/`remove`). `lua_run` and `console_cmd` share `unsafe` because they're equivalent in power (Lua can `RunConsoleCommand`; the console can `lua_run` arbitrary Lua), so a single gate is honest rather than illusory granularity. Project-specific capabilities declare their own (e.g. TARDIS's `tardis_control`).
+
+**Two gating axes: arbitrary-code (`unsafe`) and structured mutation (a write-cap).** `unsafe` is for tools that run caller-supplied Lua or wield arbitrary convar power: `lua_run` (and its `wait_until`/`wait_seconds`/`capture` args), `console_cmd`, `cvar_set` (it can flip `sv_cheats`/`sv_allowcslua`, so it's `console_cmd`-equivalent — curated *safe* convar knobs belong in `game_set`, not here), `debug_record`/`debug_draw`, and `player_walk`'s per-arg `until`/`sample_expr`. Separately, **a structured *mutator* is gated behind a bounded write-cap** — even though a typed `entity_set`/`player_set`/`game_set` can only do what its schema allows, *whether it may change the game at all* is the user's consent to give: **`player_control`** gates the tools that drive/reposition the local player (`player_set`, `player_walk`), **`world_control`** gates world mutation (`entity_create`/`remove`/`set`, `game_set` on both realms, `bot_spawn`/`remove`). Player is split off because it takes over the user's own avatar. **Reads are always ungated** — `entity_state`/`find`, `player_state`/`trace`, `game_state`, `cvar_state`, `world_trace`, `model_info`, `console_read`, `screenshot`, and the `debug_clear` janitor; `reload_file` is ungated too, since it re-runs already-installed on-disk code with no caller-supplied Lua. All caps default `false` (opt-in; archived so a grant persists). A tool that both reads and mutates gates on the mutation. Layering composes: `player_walk` needs `player_control` to run at all *and additionally* `unsafe` for its `until`/`sample_expr` args (whole-tool `requires` checked first, then per-arg).
+
+**Never bypass the capability gate with cross-realm code.** Never route caller-supplied Lua from a **client** realm to the **server** realm over `net` for the server to run: a `net.Receive` doesn't pass through `MCP:CheckCapabilities`, so it bypasses the gate entirely and escalates client power to server authority (an RCE). Cross-realm code crosses **only through the bridge** — arm each realm as its own capability-gated tool, correlate by a caller `link_id`; the `net` channel carries only non-code signals + result data, host-gated on `ply:IsListenServerHost()`. Server→client code *is* sanctioned (the trusted direction — the engine's own `SendLua` already permits it), e.g. `player_lua_run`.
+
+## Deferred waits (RunFor / Settle)
+
+A handler that must wait for an effect across frames defers (`return ctx.deferred`) and resolves later via `ctx.respond`. Two shared primitives in `lua/mcp/libraries/libraries/sh_runfor.lua` drive these — both RealTime + `Think`, never `timer.Simple`:
+
+- `MCP:RunFor(opts, onDone)` — the base bounded per-frame loop: runs `on_each(elapsed)` and/or polls `stop(elapsed)` each frame up to `seconds`; resolves once with `reason` = `stop` / `duration` / `error` (`on_each`/`stop` are pcall'd; a throw ends it as `error`). The windowed-loop core for sample-per-frame tools.
+- `MCP:Settle(opts, onDone)` — layered on RunFor: resolves when `check(elapsed)` has held **continuously** for `stable_for` (the dwell, so a transient blip can't false-settle), else times out. The caller supplies `check` because the harness can't know what "settled" means — velocity for poses, existence for removes. `settled = (reason == "stop")`.
+
+A tool's `seconds` must sit under its declared `timeout` (per-tool request timeout) or the .NET host abandons the call before the wait finishes. **Gate stillness on velocity, not per-frame position** — a from-rest drop starts at ~0 speed, so a position gate false-settles before the fall accelerates. Consumers: `player_set`, `bot_remove`. (`bot_spawn`'s multi-phase respawn is a deliberately frame-counted state machine, not a settle, so it stays hand-rolled.)
+
+## Async jobs (asyncable / job_collect)
+
+Any tool that defers can opt into running its wait as a **background job** instead of blocking the call: declare `asyncable = true` in the `AddFunction` table and the framework advertises a universal `async` boolean arg. Called with `async = true`, `MCP:Dispatch` mints a job, points `ctx.respond` at a job-registry slot instead of the bridge's `respondLater`, and returns `{ job_id, status = "armed" }` **at once** when the handler defers; the handler code is otherwise untouched (the `async` arg injection is a single wrap of the schema at registration, `sh_module.lua`). Blocking stays the default, so nothing existing changes.
+
+Why it exists: a blocking wait can't be interleaved with the tool calls that CAUSE its condition (you can't issue them while blocked), and no single blocking call can exceed the host's ~60 s ceiling (`RunFor` clamps at `HARD_MAX_SECONDS = 60` too). Async removes both limits.
+
+- **Registry** (`lua/mcp/libraries/libraries/sh_jobs.lua`, per-realm): `MCP._jobs` keyed by `mcp_job_<seq>`; `RegisterJob`/`CompleteJob` (guarded on `armed`, idempotent)/`CancelJob`/`SweepJobs` (TTL-reaps finished ~300 s, and orphaned armed past `deadline`). Modelled on the interactive recorder's arm → slot → fill → collect/forget → sweep lifecycle, generalized.
+- **`job_collect` / `job_cancel` / `job_list`** (`functions/sh_job_*.lua`, both realms, **ungated** — they only touch a slot the already-gated `async` arm made). `job_collect` block-or-polls (returns the tool's own result verbatim, same shape as a sync call; forgets on collect; `pending` to re-poll) — the exact debug_record_read shape. Collect on the realm you armed.
+- **Passive completion**: `CompleteJob` pushes a `kind = "job"` event onto the events ring (`RecordEvent`, `sh_capture.lua`), so a finish rides the **next** tool response's `events` and shows in `console_read` — the model learns a job finished without polling. Lightweight notice (job_id + ok/error + a `path` if present); the full result stays in `job_collect`. This is the same rail passive console/error output uses (there is no server→model push).
+- **Cancellation seam**: an asyncable tool registers `ctx.onCancel(teardown)` — teardown removes its hooks / releases side effects but does **not** respond (the registry owns the terminal state). `RunFor`/`Settle` now return a silent-cancel closure for RunFor-based tools; hand-rolled tools pass their own cleanup. `onCancel` is optional — without it cancel is "soft" (mark cancelled, let the tool's own cap expire the hooks).
+- **.NET**: a media tool returning a `content` array skips the whole-result JSON dump, so `BuildContent` (`Program.cs`) explicitly re-surfaces `events` as a trailing text block — else a passive job completion landing on an inline-screenshot response would be dropped (its cursor already advanced).
+
+Asyncable tools: **`screenshot`, `lua_run`, `player_walk`, `debug_record`, `player_lua_run`** — the long/conditional waiters. The sub-2 s settle mutators (`cvar_set`, `player_set`, `entity_set`/`remove`, `bot_remove`) are deliberately **not** asyncable: they settle before you could interleave anything and never approach the 60 s ceiling. Adding a new asyncable tool is a flag plus an optional `ctx.onCancel` line.
+
+## Tooling
+
+- `.luarc.json` configures sumneko-LuaLS with `./.tools/glua-api` (GLua type stubs).
+
+## .NET side
+
+Built with the official `ModelContextProtocol` C# SDK + Generic Host. `server/GModMcpServer/Program.cs` wires `.AddMcpServer().WithStdioServerTransport()`, watches `garrysmod/data/mcp/manifest_server.json` and `manifest_client.json` (one per realm; the host merges them), and forwards `tools/call` requests through `FileBridge`.
+
+```bash
+cd server/GModMcpServer
+dotnet build
+dotnet run    # for local development
+```
+
+**Building requires no MCP host holding these binaries open.** A running host — `dotnet run`, or the GMod MCP server registered in *any* agent or MCP Inspector session pointed at this build — keeps `bin/.../GModMcpServer.dll` locked, so `dotnet build` / `dotnet test` fails with a file-in-use error. Disable or stop the MCP server in **every** active session (and anywhere else it's running) before building, then re-enable it after.
+
+**Workaround to build/test without stopping the server: use `-c Release`.** The live host loads `bin/Debug/net10.0/GModMcpServer.dll`, so a Release build/test writes to the separate `bin/Release/net10.0/` path the running Debug host isn't holding — the suite runs with the MCP server still enabled (`dotnet test server/GModMcpServer.Tests/GModMcpServer.Tests.csproj -c Release`; add `--no-build` on repeat runs). Only works while Debug is the live config; flip if the host is ever registered from a Release build.
+
+Tests live in `server/GModMcpServer.Tests/` (NUnit 4). Run with `dotnet test server/GModMcpServer.Tests/GModMcpServer.Tests.csproj` from the repo root. Coverage focuses on `MergedManifest.Equals`, `FileBridge` round-trips against a `FakeGmodResponder`, and `ManifestWatcher` change detection. `GameProcessManager` and the host tools (`Launch`/`Close`/`Status`) aren't unit-tested — they wrap the OS process layer and the live file bridge respectively.
+
+Two categories of tool exist on the .NET side:
+- **Host tools** (`server/GModMcpServer/Host/Tools/`) — implemented in-process, available even when GMod isn't running: `host_launch`, `host_close`, `host_status`. `host_changelevel` also lives here but needs a running game — it changes the live map and blocks until the new map is ready (the in-game sibling of `host_launch`'s readiness wait). `mcp_reload` is also here — the host-managed addon reload (re-runs the Lua, restarts the bridge, then waits for both realms via the `_generation` bump in `_ping`); it's named for the console command it wraps, *not* `host_*`, because it reloads the addon, not the game. It exists because the bare console `mcp_reload` tears the bridge down mid-call and times out the triggering caller.
+- **Bridge tools** — declared by GMod via `MCP:AddFunction`, dispatched through the file IPC. Names always end in `_sv` or `_cl` so realm is visible.
+
+`host_status` issues a live `_ping` round-trip when GMod is detected so the MCP client can distinguish "running but bridge unreachable" from "running but `mcp_enable` is off." See `docs/protocol.md` for the wire format.
+
+### Tool-list generation (README)
+
+The **Tools** tables in `README.md` are auto-generated — the prose around them is normal README text, but the three tables (between the `<!-- TOOLS:HOST -->`, `<!-- TOOLS:GAME -->`, `<!-- TOOLS:CAPS -->` marker pairs) are not hand-edited. `server/GModMcpServer.ToolList` builds them game-independently: it reflects the host tools via `HostToolCatalog.Describe()` and recovers the GMod bridge tools by running the addon's registration code headlessly under MoonSharp (`LuaToolDump` stubs the few globals touched at file-load, loads `sh_` in both realms, then calls the real `MCP:BuildManifest()`). MoonSharp is a dependency of the generator only, never the shipping server.
+
+`HostToolCatalog.ToolTypes` is the single source of truth for host tools — Program.cs registers DI from it and the generator reflects from it, so a new host tool is picked up by both. Regenerate with `dotnet run --project server/GModMcpServer.ToolList` (`--check` exits non-zero if stale, for CI). The `tool-list.yml` workflow regenerates and auto-commits on push to main (pushing with `GENERATE_DOCS_TOKEN`, a PAT, since `main`'s branch-protection ruleset blocks the default `GITHUB_TOKEN`).
+
+Two rules when adding a tool the generator has to handle. **(1) Generate only data:** the generated regions are just the three tables — all prose (intro, links, per-section descriptions) stays hand-written in the README outside the markers, never baked into the generator. **(2) Keep a tool file's load-time code bare:** at file load do only `MCP:AddFunction({...})` with a literal schema. The generator runs each registration headlessly under MoonSharp with a minimal stub env, so any game global touched *at load* — `isnumber`/`IsValid`/`pairs(_G)`, enum constants like `SOLID_*`/`COLLISION_GROUP_*` — is nil and throws, crashing generation. Build any computed table (enum reverse-maps, capability lists) **lazily on first handler call** and cache; the handler never runs at load, so game globals are fine there.
+
+## Hot reload
+
+Editing an existing Lua tool file is enough — no console command needed. GMod's autorefresh re-runs the file, `MCP:AddFunction` is idempotent and updates the registry in place, then a debounced 100 ms timer writes a fresh manifest. The .NET host's `ManifestWatcher` notices the content delta and pushes `notifications/tools/list_changed` to the connected MCP client.
+
+`mcp_reload` is still available for forced rebuilds (e.g. when a tool file has been *deleted* — autorefresh has nothing to fire on for removals, and for a brand-*new* file on **either realm**, which `mcp_reload` picks up because `MCP:Reload` re-runs `LoadFolder("functions")` in both realms — on the listen/SP host the client `include`s new files straight off the shared disk, so a brand-new *client* tool hot-loads with no relaunch too, verified 2026-06-30 with `entity_find_cl`). It comes in two forms: the in-game console command, and the host-managed `mcp_reload` MCP tool (above) which waits for the bridge to come back — prefer the tool from an MCP client, since the bare console reload restarts the bridge mid-call and times the caller out.
+
+**Adding, renaming, or removing a tool now propagates mid-session — no restart needed.** We advertise `capabilities.tools.listChanged: true` (set in `Program.cs` via a post-`Configure`; the SDK's manual `WithListToolsHandler` path leaves the flag off, only the attribute/collection path auto-sets it). With it advertised, the manifest-delta `notifications/tools/list_changed` actually takes effect: verified live 2026-06-29 on Claude Code v2.1.195 — a runtime-registered tool was callable **within the same turn**, and a removed one vanished. The old "must restart" belief was *our* bug, not Claude Code's: CC correctly gates on the advertised capability, which we never sent. CC's handling of it has been historically flaky (anthropics/claude-code#4118, #31893), so a restart stays the fallback if a new tool ever fails to appear. Game-side caveat unchanged: a brand-*new* file (or a deletion) still needs `mcp_reload` to load/clear it — autorefresh only fires for edits to existing files — but once the manifest changes, CC picks it up without a restart. *Editing the body of an already-registered tool* needs nothing — autorefresh updates the handler and the known name/schema still dispatches. (Distinct from the genuinely-unsupported `notifications/message` server→model channel: Claude Code surfaces **no** unsolicited MCP notification to the model — only tool results reach it — so passive console/error output rides back on the next tool result's `events` field + the `console_read` poll tools, never a push. That feature request is closed *not-planned*; don't propose a push channel to make the model *see* something.)
+
+ConVar values (capability gates, `mcp_enable`) are `FCVAR_ARCHIVE` so they persist across reloads. Persisting across a game *restart* additionally needs a clean shutdown: GMod writes its archived server convars to `cfg/server.vdf` only on a proper window-close, so `host_close` does that by default (see Process tracking) — a force-kill loses any grants set that session.
+
+## Multi-host file IPC
+
+Multiple .NET MCP hosts can share the same GMod data dir (e.g. Claude Code + MCP Inspector running side-by-side). Each .NET host generates a per-process session GUID at startup and prefixes every request id with `<session>__`, so the response files are filtered by glob and never poach each other. GMod treats the prefixed id as opaque and echoes it back in the response filename. Cleanup of `mcp/<realm>/in,out/` happens in `MCP:StartBridge` (init + `mcp_reload`), so crashed-host orphans are reaped on next reload — no TTL janitor needed.
+
+## Process tracking (host_launch / host_close)
+
+`GameProcessManager` finds GMod via `Process.GetProcessesByName("gmod")` rather than holding the handle returned by `Process.Start`. The launcher chain re-execs itself within seconds on Windows, so the original handle goes stale fast — but only one `gmod.exe` is ever running at a time (Steam blocks duplicates), so a name lookup is both reliable and survives .NET host restarts. `_lastArgs` is in-memory state — populated only when *this* .NET process called Launch — and is informational.
+
+`host_close` defaults to a **clean** shutdown so GMod saves its config (capability grants / `mcp_enable` → `cfg/server.vdf`, written only on a real window-close). Lua can't quit (the engine blocklists `quit` on every Lua path: `game.ConsoleCommand`, `RunConsoleCommand`, `Player:ConCommand`) and a raw `WM_CLOSE` is ignored, so it posts the X-button signal (`WM_SYSCOMMAND`/`SC_CLOSE`) to the visible "Garry's Mod" window — found by enumerating top-level windows across all gmod PIDs, since the launcher spawns several (CEF/Steam helpers) and `MainWindowHandle` is unreliable. It waits up to `graceful_seconds` (default 10) for the tree to exit, then falls back to a kill; `force: true` skips straight to the kill (no config save). The clean path is Windows-only (`OperatingSystem.IsWindows()`-guarded); other platforms kill.
+
+### Focus handling on launch (`host_launch` `background`)
+
+GMod grabs the OS foreground at **window creation** (early, well before bridge readiness). Whether that's wanted depends on intent, so a single `background` arg (Windows-only) drives all the focus handling; there is no separate `fix_focus` knob.
+
+Everything here leans on one primitive: `GameProcessManager.SetForegroundForced` — a `SetForegroundWindow` wrapped in the **`AttachThreadInput` trick** (attach our input queue to the *current* foreground window's thread for the call; it may even report false yet still take effect). A *plain* `SetForegroundWindow` from this long-lived background host is **silently blocked by Windows' foreground lock** whenever another process holds/asserts the foreground — GMod during its startup grab (live: 51 futile demotes, GMod held ~7 s), OR a window the user is actively clicking (live: 4 plain flickers failed mid-click and the mouse stayed stuck). The forced version wins in one shot, with a **clean refocus afterwards** (no FPS/mouse-look corruption — unlike the **rejected** synthetic `WM_KILLFOCUS`/`WM_ACTIVATE` deactivate messages, which free the mouse but wreck the next real refocus).
+
+`background: false` (**default**, "foreground launch"): GMod is allowed to come to the front. After readiness, `ReconcileFocusAsync` checks for the **stuck-mouse glitch** — the GMod/SDL bug where, if focus is lost during the startup race, GMod misses the OS focus-lost event, keeps its cached focus flag "focused", and grabs the mouse (relative-mouse recenter) *while backgrounded*. Signature: `GameProcessManager.IsForeground()` false **and** the client realm's `_ping` `has_focus = true` (a *clean* background, `has_focus = false` — e.g. the user deliberately alt-tabbed away — is not the glitch and is left alone). On a hit it heals by bringing GMod **legitimately to the foreground** (`FocusGame`), so the mouse grab is correct because the game really is the active window — consistent with "foreground launch". `has_focus` lies (stays true) during the glitch, so it's only a *detector*, never trusted as truth.
+
+`background: true` ("keep my window", for the MCP-from-fullscreen-RDP workflow): never steal focus. `host_launch` captures `CaptureForegroundWindow()` *before* `Launch`, then a concurrent watcher (`WatchForegroundAsync`, ~120 ms) calls `DemoteFromForeground(userWindow)` throughout the readiness wait, restoring the user's window whenever GMod grabs it. A **single** forced restore sticks (GMod asserts the foreground only once, at creation, and doesn't re-grab), leaving GMod **cleanly unfocused** (`has_focus = false`, no mouse grab); validated `demotes = 1` with a 200 ms logger **never once** catching GMod foreground. Needs `wait_for_bridge` (the watcher rides the readiness wait). The post-readiness reconcile then finds the stuck signature for this mode and would flicker (`FlickerFocus`: forced focus-in → settle → restore the user's window) to free the mouse — but in practice the watcher already prevented the stuck state, so it no-ops.
+
+Reported back in the `background_focus` (watcher) and `focus_reconcile` (`action`: `none` / `focus_game` / `flicker`) result blocks.
+
+`host_launch` and `host_changelevel` wait for **both** realms to report ready before returning (`BridgePinger.WaitUntilReadyAsync` polls server + client each tick, fail-fast on either realm's `bootstrap_error`). The client realm only needs to be reachable with `mcp_enable` on (bootstrap state is server-side) and is where `has_focus` comes from.
+
+<!-- >>> GENERATED shared conventions (gmod-addon-tools) - do not edit; regen: scripts/generate-agent-guidance.ps1 >>> -->
+
+_Shared conventions for my GMod addons - generated from [`gmod-addon-tools/docs/gmod-addon-conventions.md`](https://github.com/AmyJeanes/gmod-addon-tools/blob/main/docs/gmod-addon-conventions.md). Edit it there, not in this file; the block below is overwritten by CI. Addon-specific guidance lives outside the markers._
+
+## Code style
+
+- **Pure Lua syntax only - no GMod-Lua extensions.** No `//` comments, no `continue`, no `!=`, no `&&`/`||`. Use `--`, `goto skip` (`continue` is a reserved word even as a `goto` label, so `goto continue` fails at load), `~=`, `and`/`or`.
+- **Comments: concise, the _why_ not the _what_.** A couple of lines at most; reserve length for genuinely non-obvious rationale and bias toward cutting - match the surrounding density, don't pad to essay length. Don't restate the code, don't explain it by what it replaced, and keep the _why_ self-contained (no pointers to external docs or fragile cross-file references). Keep comments ASCII: `->` not an arrow, a single spaced hyphen for a dash (never a double `--`, which reads as a second comment marker, nor an em-dash).
+- **Drop the loop variable you don't use** rather than naming it: `for _, v in pairs(t)`, `for k in pairs(t)`, `for _ = 1, n do`. The `unused` lint is on - keep the noise floor at zero.
+- **Every `---@diagnostic disable` needs a paired reason** on the same or preceding line naming _why_ the rule is suppressed. The default is to fix the issue, not suppress it.
+- **If that reason is an analyzer or annotations defect rather than our code, start it `glua_ls <version>:`** - and do the same for a `---@cast` / `---@type` / `--[[@as]]` that only exists to work around one. `grep -rn "glua_ls <version>"` is then the complete list to re-test on a toolchain bump, and anything unmarked is a genuine local decision. Without it there is no way to tell the two apart, and a workaround outlives the bug it was written for.
+
+## First-time setup (before touching `.lua` files)
+
+The tooling (`glua_check`, `glua_ls`, the GLua API stubs, and the wiki/typing type-model) is provisioned by the shared [`gmod-addon-tools`](https://github.com/AmyJeanes/gmod-addon-tools) module, cloned **beside this addon**. `scripts/install-tools.ps1` is a thin wrapper - `scripts/bootstrap.ps1` resolves the sibling module and it calls `Initialize-GmodTools`, so the version pins live once in the module and every addon runs the exact same engine.
+
+```bash
+git clone https://github.com/AmyJeanes/gmod-addon-tools ../gmod-addon-tools
+pwsh -File scripts/install-tools.ps1
+```
+
+It is idempotent - re-running is a no-op when the pinned versions are already present, so it is also the recovery path when diagnostics look wrong. In Claude Code, run `/reload-plugins` after a fresh install so the live LSP restarts against the new binary. Codex does not need a reload because it uses the project-local tools for explicit checks rather than a live LSP session.
+
+### `.luarc.json` library entries
+
+Reference a sibling's subdirectories - `../Doors/lua` **and** `../Doors/.luatypes` - never `../Doors` itself. Each addon provisions its own `.tools/glua-api`, so a root entry loads the annotations twice, which breaks `@return_cast` narrowing and misreports types at sites with no visible link to libraries ([gmod-glua-ls#48](https://github.com/Pollux12/gmod-glua-ls/issues/48)). Omitting a sibling's `.luatypes` silently drops its type overrides. `Initialize-GmodTools` fails on both.
+
+### `.luatypes` files must abort if executed
+
+They declare real globals and functions with empty bodies (`CPPI = {}`, `function debug.getinfo(...) end`), so executing one replaces working code with stubs. Living outside `lua/` is what keeps them unreachable - the game mounts, and `gmad` packs, from a fixed folder whitelist - so leave them there. Each also carries a guard as its first executable line, which `Initialize-GmodTools` enforces and the analyzer ignores:
+
+```lua
+error("cppi.lua contains type annotations only and must never be executed")
+```
+
+## GLua analyzer integration (`glua-lsp` plugin)
+
+The [`glua-lsp` plugin](https://github.com/AmyJeanes/gmod-agent-plugins) distributes the shared GLua setup and recovery skills to Claude Code and Codex. Both agents use the same project-local [`glua_ls`](https://github.com/Pollux12/gmod-glua-ls), `glua_check`, and API stubs under `.tools/`; no global install or PATH plumbing is required.
+
+Claude Code also uses the plugin for live diagnostics, hover, and jump-to-definition. Diagnostics arrive automatically after every edit. `.claude/settings.json` declares the `gmod-agent-plugins` marketplace so contributors are prompted to install it on first open, and the plugin resolves `glua_ls` from this project's `.tools/bin/` when it launches. Codex does not currently expose a live LSP integration, so use `scripts/glua-check.ps1` for repository diagnostics there. The `glua-lsp:install-glua-ls` skill covers the same provisioning and recovery flow in either agent. Treat diagnostics as actionable only when the current change caused them; pre-existing noise on unrelated lines is outside scope.
+
+## Whole-repo scans (`scripts/glua-check.ps1`)
+
+`glua_ls` only analyzes files as they are opened or edited. To audit the whole repo at once, run `pwsh -File scripts/glua-check.ps1` - it provisions tooling on demand (no-op when present) and runs `glua_check --warnings-as-errors` against the workspace root. It takes no path filter, so it always scans everything; CI runs the same script. Useful after a fix ripples across the tree, or when picking the project up to surface latent issues the LSP hasn't opened yet. Count the diagnostics rather than trusting the exit code: `hint` sits below `--warnings-as-errors`, so a hint-level regression still prints `Check successful` and exits 0.
+
+**Local and CI can disagree, and CI is authoritative** - but `glua_check` itself is platform-consistent (verified against the Linux binary), so suspect a difference in *what is being analyzed* before suspecting the analyzer: a duplicate annotations copy on the library masks undeclared engine classnames locally, for instance. Declare those in `.luatypes` as `---@class <name> : Entity`. What does diverge is the generated hook catalogue, which resolves types through `glua_doc_cli` rather than `glua_check` - hence CI owning that file, and never regenerating it locally. Avoid a strict `---@class`/`---@type` on a *partial or reused literal*; use `table`/`table[]?` or a `--[[@as Class]]` cast instead.
+
+## Typing enforcement (`scripts/typing-check.ps1`)
+
+`glua_check` catches _wrong_ types but not _missing_ ones - an untyped param is a silent `any` it never flags. `Test-GmodTyping` (CI: `typing-check.yml`) closes that gap, failing the build on any of: an untyped param, annotation rot (a `---@param` for a param that no longer exists), a modeled function whose resolved return type contains `unknown`, a hook fire-site argument that resolves to `unknown`, or a `:CallHook`-style hook whose receiver resolves to `unknown` (so its "Fired on" column would render _Unknown_ - usually fixed with a `---@param self <class>` on the enclosing function). Satisfy it at the **source** - prefer a `---@param` / `---@return` / `---@class` annotation over a per-callsite `---@cast`, since annotations propagate to every caller. The only accepted escapes are explicit and greppable: `---@param x any` (a reviewed, genuine `any`), an `_` discard for a deliberately-unused arg, and a file-level `---@vendored` marker on third-party code.
+
+Where an addon fires its own hooks, callback payload params are typed by a generated `---@overload` catalogue (`scripts/generate-hook-types.ps1`, CI: `generate-hook-types.yml`) - do not hand-edit it; retype a payload at its `CallHook` / `hook.Run` site instead. Custom global-hook overloads are spliced into the provisioned `hook.lua` by `Initialize-GmodTools`, so after pulling a change to a generated fragment mid-session, re-run `scripts/install-tools.ps1` to re-sync it. In Claude Code, then run `/reload-plugins` to refresh the live types.
+
+## Before reporting a `glua_ls` bug
+
+The two gates disagree by design: `Test-GmodTyping` only asks whether a param is typed at all, which an `---@overload` match satisfies; `infer-unknown` additionally asks whether it was _declared_, which an overload match is not. So a hook callback can pass typing-check and still trip `infer-unknown` on values derived from its params - an explicit `---@param` above the `hook.Add` clears it. This hits stock GMod hooks too, not just generated catalogues.
+
+A committed `---@diagnostic disable` marks a genuine analyzer bug - it fired, and was suppressed. A `---@cast` / `---@type` / `--[[@as]]` frequently does not; it is often a redundant defensive leftover. Remove it in the real workspace and re-check before concluding anything - but **four** things read these annotations and only two of them run locally:
+
+- `glua_check` - **count the diagnostics, never the exit code**; `hint` sits below `--warnings-as-errors`, so a hint-level regression still prints `Check successful` and exits 0.
+- `Test-GmodTyping` - hook fire-site arguments `glua_check` never mentions.
+- the generated hook catalogue - it resolves `CallHook` / `hook.Run` argument types and only regenerates in CI, so deleting a cast that fed one has turned `main` red with no local signal at all.
+- a generated wiki - a `---@field` can decide a *published* type, and nothing gates it: the workflow regenerates and commits rather than failing on drift. One deletion downgraded a rendered `linked_portal_door` to `Entity` with both code gates green.
+
+`Test-GmodAnnotation` measures all four - it removes the annotation, re-measures each, restores, and reports which moved (an inline `--[[@as T]]` has its token stripped rather than its line deleted):
+
+```powershell
+pwsh -c ". ./scripts/bootstrap.ps1; Test-GmodAnnotation -RepoRoot . -Site 'lua/foo.lua:270'"
+```
+
+Suppressions tracking an upstream report carry a `glua_ls upstream:` comment with the issue URL, so grep that to find what to retire when one closes.
+
+Already investigated and **not** bugs, so do not re-derive them: `pcall` never narrows on `ok` (a limitation every Lua type system shares); `table.Copy` is genuinely generic, and its casts suppress `need-check-nil` because the return is honestly `T?`; `string.gmatch`'s bare `---@return function` makes a local `---@type fun(): string` a real tightening rather than a workaround; the undocumented Derma / `DModelPanel` getters are correctly omitted from the stubs; and a runtime-conditional `ENT.Base` (Wire mounted or not) cannot be resolved statically, though that no longer costs a suppression - wire came off the analysis surface and the symbols we use are declared instead.
+
+## Bumping the shared tooling
+
+Tool versions and this conventions block are pinned to a `gmod-addon-tools` tag. Bump the version constants in `gmod-addon-tools/src/install.ps1` (or edit the shared docs); merging to the module's `main` auto-cuts a new tag, and Renovate then raises a pin-bump PR here that regenerates the affected artifacts and runs GLua Check before it merges. CI pins the module by tag (the `ref:` in each workflow); a local sibling checkout uses whatever branch it is on, so keep it on the pinned tag to mirror CI exactly.
+
+<!-- <<< END GENERATED shared conventions <<< -->
