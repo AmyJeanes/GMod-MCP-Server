@@ -32,9 +32,11 @@ public sealed class LaunchTool : IHostTool
         "Launch Garry's Mod and wait until the MCP bridge is fully ready before returning. " +
         "Defaults: gm_construct map, sandbox, console open, native resolution from GMod's own config, " +
         "singleplayer (pass maxplayers > 1 to boot a listen/multiplayer server instead). " +
-        "Workshop maps and player models work because the launcher boots into a stock bootstrap map first " +
-        "and the addon transitions to the real target once Steam has finished mounting subscriptions; " +
-        "this tool blocks across both stages so callers don't have to poll. " +
+        "Maps on disk (base game, loose addons/, download/) boot directly. A map that isn't on disk is " +
+        "assumed to be a workshop map: the launcher boots the stock bootstrap map (gm_construct) first, " +
+        "then switches to the target once Steam has mounted it — so workshop maps and player models work " +
+        "without the caller polling. If the target turns out not to exist anywhere, the launch still " +
+        "succeeds on gm_construct and reports map_not_found. " +
         "Tool-dispatch convars (mcp_enable, mcp_allow_*) are FCVAR_ARCHIVE so once set they persist " +
         "across game restarts — no per-launch user step. If a convar isn't set yet, the tool times " +
         "out with a hint naming the missing convar; otherwise it returns ready with no user input.";
@@ -43,15 +45,14 @@ public sealed class LaunchTool : IHostTool
     {
       "type": "object",
       "properties": {
-        "map":          { "type": "string",  "description": "Map to load (default: gm_construct). Workshop maps work — the launcher bootstraps gm_construct, waits for the workshop subscription to mount, then transitions to the target. Empty string boots to the main menu." },
+        "map":          { "type": "string",  "description": "Map to load (default: gm_construct). On-disk maps boot directly; a workshop map (not on disk) is auto-bootstrapped via gm_construct and switched to once Steam mounts it. A map that exists nowhere still launches (on gm_construct) and returns map_not_found. Empty string boots to the main menu." },
         "gamemode":     { "type": "string",  "description": "Gamemode (default: sandbox)." },
         "maxplayers":   { "type": "integer", "description": "Player slots, 1-128. Omit or 1 = singleplayer (default). >1 boots a LISTEN (multiplayer) server — needed for bots, a second client, or any multiplayer-only behaviour. Fixed at launch: maxplayers can't change on a running game, so switching modes means host_close then host_launch." },
         "console":      { "type": "boolean", "description": "Open the developer console window (default: true)." },
         "windowed":     { "type": "boolean", "description": "Force windowed (true) or fullscreen (false). Omit to keep whatever GMod has configured — that's the default and what the user usually wants." },
         "width":        { "type": "integer", "description": "Override window width. Omit to use GMod's configured resolution." },
         "height":       { "type": "integer", "description": "Override window height. Omit to use GMod's configured resolution." },
-        "max_wait":     { "type": "integer", "description": "Safety-net cap on seconds to wait for workshop subscriptions to finish mounting before transitioning anyway (default: 60). Detection itself is event-driven on engine.GetAddons() — this only fires if Steam stalls." },
-        "skip_bootstrap": { "type": "boolean", "description": "Skip the two-stage bootstrap and pass +map directly. Faster but breaks workshop content (default: false)." },
+        "skip_bootstrap": { "type": "boolean", "description": "Force a direct +map even for a map that isn't on disk, skipping the workshop bootstrap. A workshop map then won't be mounted in time and fails to load (default: false). On-disk maps are direct regardless, so this only affects workshop maps." },
         "extra_args":   { "type": "array",   "items": { "type": "string" }, "description": "Extra arguments appended verbatim to the gmod.exe command line." },
         "wait_for_bridge": { "type": "boolean", "description": "Block until the bridge is reachable, mcp_enable is 1, and the bootstrap transition has completed (default: true). Set false for fire-and-forget launches." },
         "wait_timeout_seconds": { "type": "integer", "description": "How long to wait for the bridge to become ready before returning a timeout error (default: 180). Workshop boots can take 30-90s; the user also needs time to type `mcp_enable 1`." },
@@ -69,7 +70,6 @@ public sealed class LaunchTool : IHostTool
         var windowed = HostToolHelpers.GetBoolOrNull(args, "windowed");
         var width = HostToolHelpers.GetIntOrNull(args, "width");
         var height = HostToolHelpers.GetIntOrNull(args, "height");
-        var maxWait = HostToolHelpers.GetInt(args, "max_wait", 60);
         var skipBootstrap = HostToolHelpers.GetBool(args, "skip_bootstrap", false);
         var extra = HostToolHelpers.GetStringArray(args, "extra_args");
         var waitForBridge = HostToolHelpers.GetBool(args, "wait_for_bridge", true);
@@ -83,15 +83,19 @@ public sealed class LaunchTool : IHostTool
             return HostToolHelpers.Err(bad.ToJsonString());
         }
 
-        // Decide whether to use the two-stage bootstrap. Direct mode (skip_bootstrap=true)
-        // or "boot to menu" (empty map) goes straight to the legacy +map path.
-        var useBootstrap = !skipBootstrap && !string.IsNullOrEmpty(map);
+        // Decide whether to use the two-stage bootstrap. A map on disk (base game,
+        // loose addon, or download) loads via a bare +map, so it — like skip_bootstrap
+        // or "boot to menu" (empty map) — takes the direct path. A map that isn't on
+        // disk is assumed to be a workshop map (mounted asynchronously by Steam) and
+        // gets the bootstrap: boot gm_construct, then switch once it's mounted.
+        var onDisk = MapExistsOnDisk(_proc.GameRoot, map);
+        var useBootstrap = !skipBootstrap && !string.IsNullOrEmpty(map) && !onDisk;
 
         // Stale intent files would re-fire on every launch — wipe before writing a new one.
         TryDeleteIntent();
         if (useBootstrap)
         {
-            WriteIntent(map, gamemode, maxWait);
+            WriteIntent(map, gamemode);
         }
 
         var bootMap = useBootstrap ? BootstrapMap : map;
@@ -162,9 +166,24 @@ public sealed class LaunchTool : IHostTool
             return HostToolHelpers.Err(failure.ToJsonString());
         }
 
-        var bootstrapNote = useBootstrap
-            ? $"booting via {BootstrapMap}; will transition to {map} ({gamemode}) once engine.GetAddons() reports all downloaded subscriptions mounted (safety max_wait={maxWait}s)"
-            : "skip_bootstrap: passing +map directly; workshop maps/models may not load on first spawn";
+        string bootstrapNote;
+        if (useBootstrap)
+        {
+            bootstrapNote = $"'{map}' isn't on disk — assuming a workshop map: booting {BootstrapMap} first, "
+                + $"then switching to {map} ({gamemode}) once Steam has mounted it during the boot load.";
+        }
+        else if (string.IsNullOrEmpty(map))
+        {
+            bootstrapNote = "no map: booting to the main menu.";
+        }
+        else if (skipBootstrap)
+        {
+            bootstrapNote = "skip_bootstrap: passing +map directly; a workshop map won't be mounted in time and will fail to load.";
+        }
+        else
+        {
+            bootstrapNote = $"'{map}' is on disk; booting it directly (no bootstrap needed).";
+        }
 
         if (!waitForBridge)
         {
@@ -220,6 +239,7 @@ public sealed class LaunchTool : IHostTool
                 ["singleplayer"] = server.SinglePlayer,
                 ["bootstrap_pending"] = server.BootstrapPending,
                 ["bootstrap_error"] = server.BootstrapError,
+                ["bootstrap_map_missing"] = server.BootstrapMapMissing,
             },
             ["client_ping"] = new JsonObject
             {
@@ -254,6 +274,16 @@ public sealed class LaunchTool : IHostTool
         if (OperatingSystem.IsWindows())
         {
             result["focus_reconcile"] = await ReconcileFocusAsync(client, background, ct).ConfigureAwait(false);
+        }
+
+        // Soft outcome: the requested map didn't exist (not on disk, and no mounted
+        // workshop addon provides it). The launch still succeeded on the bootstrap
+        // map — surface it prominently so the caller knows the target wasn't loaded.
+        if (server.BootstrapMapMissing is string missingMap)
+        {
+            result["map_not_found"] =
+                $"Requested map '{missingMap}' doesn't exist (not on disk, and no mounted workshop addon provides it). "
+                + $"GMod launched on {BootstrapMap} instead.";
         }
 
         // Startup Lua errors matter (we live in the Lua realm) and the passive events stream
@@ -389,15 +419,45 @@ public sealed class LaunchTool : IHostTool
 
     private string IntentPath => Path.Combine(_mcpRoot, "launch_intent.json");
 
-    private void WriteIntent(string targetMap, string targetGamemode, int maxWait)
+    private void WriteIntent(string targetMap, string targetGamemode)
     {
         var intent = new JsonObject
         {
             ["target_map"] = targetMap,
             ["target_gamemode"] = targetGamemode,
-            ["max_wait_seconds"] = maxWait,
         };
         File.WriteAllText(IntentPath, intent.ToJsonString());
+    }
+
+    /// <summary>
+    /// True if <paramref name="map"/>'s .bsp is on disk in a synchronously-mounted
+    /// location — the base game (<c>garrysmod/maps</c>), a legacy loose addon
+    /// (<c>addons/*/maps</c>), or a prior download (<c>download/maps</c>). Those load via a
+    /// bare <c>+map</c>, so no bootstrap is needed. Workshop maps live inside .gma archives
+    /// Steam mounts asynchronously, so they are NOT found here — which is exactly the signal
+    /// to bootstrap. Mirrors the guard in <c>MCP.util.MapExists</c> (Lua): a map name is one
+    /// path segment, so anything with a separator or ".." can't be a real map and is rejected.
+    /// </summary>
+    internal static bool MapExistsOnDisk(string gameRoot, string map)
+    {
+        if (string.IsNullOrEmpty(map)) return false;
+        if (map.IndexOfAny(new[] { '/', '\\' }) >= 0 || map.Contains("..", StringComparison.Ordinal)) return false;
+
+        var bsp = map.EndsWith(".bsp", StringComparison.OrdinalIgnoreCase) ? map : map + ".bsp";
+        var mod = Path.Combine(gameRoot, "garrysmod");
+
+        if (File.Exists(Path.Combine(mod, "maps", bsp))) return true;
+        if (File.Exists(Path.Combine(mod, "download", "maps", bsp))) return true;
+
+        var addons = Path.Combine(mod, "addons");
+        if (Directory.Exists(addons))
+        {
+            foreach (var dir in Directory.EnumerateDirectories(addons))
+            {
+                if (File.Exists(Path.Combine(dir, "maps", bsp))) return true;
+            }
+        }
+        return false;
     }
 
     private void TryDeleteIntent()

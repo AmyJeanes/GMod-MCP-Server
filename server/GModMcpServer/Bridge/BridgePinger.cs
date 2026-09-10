@@ -46,6 +46,7 @@ public sealed class BridgePinger
             int? maxPlayers = null;
             bool? singlePlayer = null;
             string? bootstrapError = null;
+            string? bootstrapMapMissing = null;
             bool? hasFocus = null;
             int? generation = null;
             IReadOnlyDictionary<string, bool>? capabilities = null;
@@ -102,6 +103,17 @@ public sealed class BridgePinger
                     bootstrapError = beStr;
                 }
 
+                // Soft outcome, distinct from bootstrap_error: the requested map
+                // didn't exist (not on disk, no workshop addon provides it). The
+                // launch still succeeds; the host surfaces it as a note, and
+                // readiness is unaffected (bootstrap_pending clears normally).
+                if (obj.TryGetPropertyValue("bootstrap_map_missing", out var mmNode)
+                    && mmNode is JsonValue mmVal
+                    && mmVal.TryGetValue<string>(out var mmStr))
+                {
+                    bootstrapMapMissing = mmStr;
+                }
+
                 // Client realm only (server omits it); absent on older addons → null.
                 // Decoded explicitly so a genuine false is preserved (not treated as absent).
                 if (obj.TryGetPropertyValue("has_focus", out var hfNode)
@@ -127,15 +139,15 @@ public sealed class BridgePinger
                 }
             }
 
-            return new BridgePingResult(true, sw.Elapsed.TotalMilliseconds, enabled, map, bootstrapPending, maxPlayers, singlePlayer, bootstrapError, hasFocus, generation, capabilities);
+            return new BridgePingResult(true, sw.Elapsed.TotalMilliseconds, enabled, map, bootstrapPending, maxPlayers, singlePlayer, bootstrapError, hasFocus, generation, capabilities, bootstrapMapMissing);
         }
         catch (TaskCanceledException)
         {
-            return new BridgePingResult(false, null, null, null, null, null, null, null, null, null, null);
+            return new BridgePingResult(false, null, null, null, null, null, null, null, null, null, null, null);
         }
         catch (Exception)
         {
-            return new BridgePingResult(false, null, null, null, null, null, null, null, null, null, null);
+            return new BridgePingResult(false, null, null, null, null, null, null, null, null, null, null, null);
         }
     }
 
@@ -195,4 +207,5 @@ public readonly record struct BridgePingResult(
     string? BootstrapError,
     bool? HasFocus,
     int? Generation,
-    IReadOnlyDictionary<string, bool>? Capabilities);
+    IReadOnlyDictionary<string, bool>? Capabilities,
+    string? BootstrapMapMissing = null);

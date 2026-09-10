@@ -102,10 +102,15 @@ local function processOne(filename)
             -- alone isn't a reliable "ready" signal — the .NET host waits on
             -- this flag instead.
             bootstrap_pending = MCP._bootstrap_pending == true,
-            -- Set when a launch/level transition failed terminally (e.g. target
-            -- map missing); lets the host fail fast instead of waiting out the
-            -- timeout. nil when unset, so the field is simply absent from _ping.
+            -- Set when a launch/level transition failed terminally; lets the host
+            -- fail fast instead of waiting out the timeout. nil when unset, so the
+            -- field is simply absent from _ping.
             bootstrap_error = MCP._bootstrap_error,
+            -- Soft outcome (NOT an error): the bootstrap requested a map that isn't
+            -- on disk and isn't in a mounted workshop addon either, so it doesn't
+            -- exist. The launch still succeeds on the bootstrap map; the host just
+            -- reports the requested map couldn't be loaded. nil when unset.
+            bootstrap_map_missing = MCP._bootstrap_map_missing,
         }
         -- Live capability convar values (id -> granted bool), so the host's status tool
         -- reports the CURRENT grant state rather than the manifest snapshot (which is

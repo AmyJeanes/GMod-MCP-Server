@@ -1,35 +1,31 @@
 -- Server side of the two-stage launch handler.
 --
--- The .NET host_launch tool writes `data/mcp/launch_intent.json` and boots
--- GMod into the stock bootstrap map (gm_construct). Once the listen server
--- is up, this script reads the intent, then waits for the local client to
--- send `MCP_WorkshopReady` (see cl_launch_intent.lua) — the client uses
--- `steamworks.ShouldMountAddon` to compute exactly when every *enabled*
--- workshop subscription has mounted, so detection is deterministic and
--- ignores addons the user has disabled in the addon manager.
+-- The .NET host_launch tool decides BEFORE launch whether the target map is
+-- resolvable on disk. Base-game and loose-addon maps are booted directly with
+-- `+map` and never reach here. A map that ISN'T on disk is assumed to be a
+-- workshop map: the host boots the stock bootstrap map (gm_construct) and
+-- writes `data/mcp/launch_intent.json`. Once the listen server is up, this
+-- script reads the intent and transitions to the real target.
 --
--- The only timer that remains is `max_wait_seconds`, a safety net for the
--- pathological case where the client never reports ready (no client ever
--- connects, Steam download stalls, etc.) — never used on the happy path.
+-- No mount-wait handshake is needed: on the branches we target (x86-64 / dev),
+-- the engine itself waits for Steam Workshop mounts to finish before a map load
+-- completes, so by the time this server's InitPostEntity fires every enabled
+-- workshop addon is already mounted. One MapExists check is then authoritative:
+--   * present -> the workshop map mounted; changelevel to it.
+--   * absent  -> not on disk and didn't mount, so it doesn't exist. Stay on
+--                gm_construct and report it as a soft miss (not an error): the
+--                launch still succeeds with a usable game.
+-- Older pre-fix builds, where mounts trail the load, would false-miss here; we
+-- deliberately don't support them (see AGENTS.md).
 --
--- On dedicated servers this whole flow is a no-op: dedicated installs use
--- `+workshop_collection_id` to mount before any Lua runs, so there's
--- nothing to wait for, and host_launch doesn't write intent files there
--- anyway. We still register `MCP_WorkshopReady` unconditionally so a
--- client running cl_launch_intent.lua can `net.Start` it without
--- triggering the engine's "unregistered message" warning.
+-- On dedicated servers this whole flow is a no-op: dedicated installs mount via
+-- `+workshop_collection_id` before any Lua runs, and host_launch doesn't write
+-- intent files there anyway.
 
 if not SERVER then return end
 
-util.AddNetworkString("MCP_WorkshopReady")
-
 local INTENT_PATH = "mcp/launch_intent.json"
-local FALLBACK_HOOK = "MCP_LaunchIntent_Fallback"
 local READY_HOOK = "MCP_LaunchIntent_Ready"
-
-local pendingIntent = nil
-local fired = false
-local startTime = 0
 
 -- Eager check: the .NET host writes the intent file *before* spawning gmod.exe,
 -- so the bridge can answer "bootstrap pending" correctly even on the very first
@@ -47,15 +43,14 @@ local function readIntent()
     return decoded
 end
 
----@param reason string
-local function transition(reason)
-    if fired then return end
-    fired = true
-    hook.Remove("Think", FALLBACK_HOOK)
+hook.Add("InitPostEntity", "MCP_LaunchIntent_Boot", function()
+    hook.Remove("InitPostEntity", "MCP_LaunchIntent_Boot")
+    if game.IsDedicated() then return end -- dedi mounts via +workshop_collection_id; nothing to do
 
-    local intent = pendingIntent
-    pendingIntent = nil
+    local intent = readIntent()
     if not intent then
+        -- Eager-check claimed bootstrap was pending but the file is now gone or
+        -- unreadable; clear the flag so _ping doesn't lie.
         MCP._bootstrap_pending = false
         return
     end
@@ -67,81 +62,38 @@ local function transition(reason)
         return
     end
 
-    -- Validate before issuing the map command. We're on gm_construct with every
-    -- enabled workshop addon already mounted, so this sees base-game *and*
-    -- workshop maps. A missing map would otherwise fail silently, never fire a
-    -- second InitPostEntity, and leave bootstrap_pending stuck — hanging the host
-    -- until its timeout. Surface the error instead and stay on gm_construct.
+    -- Single authoritative check: we're on gm_construct with every enabled
+    -- workshop addon already mounted (the engine waited for mounts during this
+    -- load), so this sees base-game AND workshop maps. If it's still missing it
+    -- genuinely doesn't exist - surface a soft miss and stay put, rather than
+    -- issuing a `map` command that would fail silently and hang the host.
     if not MCP.util.MapExists(targetMap) then
-        MCP._bootstrap_error = string.format(
-            "target map '%s' not found (no maps/%s.bsp); staying on %s",
-            targetMap, targetMap, game.GetMap())
+        MCP._bootstrap_map_missing = targetMap
         MCP._bootstrap_pending = false
-        MsgN("[MCP] launch intent: " .. MCP._bootstrap_error)
+        MsgN(string.format(
+            "[MCP] launch intent: target map '%s' not found (not on disk, no mounted workshop addon provides it); staying on %s.",
+            targetMap, game.GetMap()))
         return
     end
 
-    MsgN(string.format("[MCP] launch intent: %s after %.2fs.",
-        reason, RealTime() - startTime))
-
-    -- Always issue a map command, even when target == current. A naked
-    -- `ply:Spawn()` doesn't reliably re-precache player models that mounted
-    -- after the initial spawn — the engine appears to cache the failed
-    -- lookup. A full map reload forces a fresh precache pass and a clean
-    -- player spawn with the workshop model in place. The cost is one map
-    -- load (~3-5 s) on every host_launch; correctness wins over speed here.
+    -- The workshop map is mounted; changelevel to it. This is a full map load,
+    -- so it precaches workshop content (player models etc.) cleanly and the
+    -- spawn on the target map has everything in place.
     MsgN(string.format("[MCP] launch intent: %s -> %s (gamemode=%s).",
         game.GetMap(), targetMap, targetGm))
-    -- Sentinel the .NET boot scanner keys on to scope the startup log to the FINAL map: the
-    -- `map` below fires so early the engine drops the player as "(Disconnect by user.)", not
-    -- "(Server shutting down)", so the transition has no engine marker of its own to detect
-    -- (EngineLogFilter.IsMapChange).
+    -- Sentinel the .NET boot scanner keys on to scope the startup log to the FINAL
+    -- map: this `map` fires so early the engine drops the player as "(Disconnect by
+    -- user.)", not "(Server shutting down)", so the transition has no engine marker
+    -- of its own to detect (EngineLogFilter.IsMapChange).
     MsgN("[MCP] map transition")
     RunConsoleCommand("gamemode", targetGm)
     RunConsoleCommand("map", targetMap)
 
-    -- Clear bootstrap_pending only after the *target* map has fully loaded.
-    -- The map command above kicks off a fresh InitPostEntity once loading
-    -- finishes; that's the signal the .NET host waits on.
+    -- Clear bootstrap_pending only after the *target* map has fully loaded. The
+    -- map command above kicks off a fresh InitPostEntity once loading finishes;
+    -- that's the signal the .NET host waits on.
     hook.Add("InitPostEntity", READY_HOOK, function()
         hook.Remove("InitPostEntity", READY_HOOK)
         MCP._bootstrap_pending = false
-    end)
-end
-
-net.Receive("MCP_WorkshopReady", function(_, ply)
-    if not pendingIntent or fired then return end
-    local current = net.ReadUInt(16)
-    local expected = net.ReadUInt(16)
-    transition(string.format("client signalled workshop ready (%d/%d enabled mounted)",
-        current, expected))
-end)
-
-hook.Add("InitPostEntity", "MCP_LaunchIntent_Boot", function()
-    hook.Remove("InitPostEntity", "MCP_LaunchIntent_Boot")
-    if game.IsDedicated() then return end -- dedi mounts via +workshop_collection_id; nothing to do
-    pendingIntent = readIntent()
-    if not pendingIntent then
-        -- Eager-check claimed bootstrap was pending but the file is now gone
-        -- or unreadable; clear the flag so _ping doesn't lie.
-        MCP._bootstrap_pending = false
-        return
-    end
-
-    startTime = RealTime()
-    local maxWait = math.max(1, tonumber(pendingIntent.max_wait_seconds) or 60)
-
-    -- Safety net: trigger transition anyway if the client never sends
-    -- `MCP_WorkshopReady` within max_wait. Driven by Think + RealTime
-    -- because timer.Simple is CurTime-based and stalls during pause /
-    -- map loads.
-    hook.Add("Think", FALLBACK_HOOK, function()
-        if fired then
-            hook.Remove("Think", FALLBACK_HOOK)
-            return
-        end
-        if (RealTime() - startTime) >= maxWait then
-            transition(string.format("max_wait %.0fs elapsed without client signal", maxWait))
-        end
     end)
 end)

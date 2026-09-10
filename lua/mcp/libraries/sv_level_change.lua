@@ -46,8 +46,9 @@ function MCP:RequestLevelChange(args)
     local gamemode = args.gamemode and tostring(args.gamemode) or nil
     local hardReset = args.hard_reset and true or false
 
-    -- New transition: clear any stale launch error so _ping won't report it.
+    -- New transition: clear any stale launch outcome so _ping won't report it.
     MCP._bootstrap_error = nil
+    MCP._bootstrap_map_missing = nil
     MCP._bootstrap_pending = true
     file.Write(MARKER, MCP.util.JsonEncode({ target_map = map }, false))
 
