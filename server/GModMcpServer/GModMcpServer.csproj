@@ -17,13 +17,13 @@
 
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" Version="2.4.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.15" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.15" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="10.0.15" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="11.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="11.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="11.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0" />
     <!-- Windows-only: read the real command line of a running gmod.exe we didn't launch
          (WMI Win32_Process), so host_status can definitively report whether -condebug is on. -->
-    <PackageReference Include="System.Management" Version="10.0.15" />
+    <PackageReference Include="System.Management" Version="11.0.0" />
   </ItemGroup>
 
 </Project>
